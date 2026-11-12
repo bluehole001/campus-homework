@@ -1,0 +1,71 @@
+# =====================================================================
+# 班级学业管理与作业提交系统（campus-homework）主配置
+# 多环境策略：默认激活 dev；生产环境部署时使用 --spring.profiles.active=prod
+# =====================================================================
+spring:
+  profiles:
+    # 默认激活开发环境，生产环境通过启动参数覆盖
+    active: dev
+  application:
+    name: campus-homework
+
+  # 文件上传上限：全局锁定 50MB（作业附件 + 教师参考附件）
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+  # Thymeleaf：开发环境关闭缓存便于调试，生产环境由 prod 配置覆盖为强缓存
+  thymeleaf:
+    cache: false
+    encoding: UTF-8
+    mode: HTML
+    prefix: classpath:/templates/
+    suffix: .html
+
+  # 日期时间序列化统一格式与时区，保证 JSON 与模板渲染一致
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: GMT+8
+
+  # RabbitMQ 公共配置（连接参数在各环境文件中定义）
+  rabbitmq:
+    listener:
+      simple:
+        # 手动 ACK：消费失败可手动 nack 进入死信队列，避免消息丢失
+        acknowledge-mode: manual
+        # 预取 1 条：防止单消费者堆积，配合手动 ACK 实现公平分发
+        prefetch: 1
+        retry:
+          # 消费端重试：3 次重试后进入死信/兜底处理
+          enabled: true
+          max-attempts: 3
+          initial-interval: 2000ms
+          multiplier: 2
+
+# MyBatis-Plus：Mapper XML 统一扫描，开启驼峰映射与 SQL 日志（开发环境）
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  type-aliases-package: com.campus.homework.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    # 关闭 MyBatis 二级缓存，缓存统一交由 Redis 管理，避免双缓存不一致
+    cache-enabled: false
+
+# 业务自定义配置：上传目录、查重阈值、邮件发件人（各环境可覆盖）
+homework:
+  upload:
+    # 附件存储根目录（Linux 生产为 /data/homework/upload，Windows 开发见 dev 配置）
+    dir: ./upload
+  plagiarism:
+    # 高重复预警阈值：余弦相似度 ≥ 0.85 触发 is_high_repeat 预警
+    threshold: 0.85
+  mail:
+    # 邮件正文中显示的发件人署名
+    from-name: 班级学业管理与作业提交系统
+
+# 日志级别：业务包默认 INFO，由 dev 环境覆盖为 DEBUG
+logging:
+  level:
+    com.campus.homework: info

@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<!--
+  教师端·成绩分析页（Batch 5 视图层，仅 ROLE_TEACHER，加载 ECharts）。
+  数据来自 GET /api/teacher/homework/{id}/analysis（ScoreAnalysisVO：
+  平均/最高/最低分、及格率、提交率、高重复人数、10 档分数分布、班级排名；
+  Service 层校验仅限本人作业，且该 VO 在 Batch 4 起整体缓存于 Redis）。
+  分布直方图按得分率 10% 一档（下标0=0-10% … 下标9=90-100%），排名表
+  仅成绩发布后由 Service 层生成——未发布时 ranking 为空数组，页面提示。
+-->
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('成绩分析')}"></head>
+<body>
+<nav th:replace="~{fragments/layout :: navbar('teacher-homework')}"></nav>
+
+<main class="hw-main">
+    <div class="container py-4">
+        <!-- 作业信息条 -->
+        <div class="card mb-3">
+            <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-3">
+                <div>
+                    <h1 class="h5 mb-1" id="hw-title">加载中…</h1>
+                    <div class="small text-muted" id="hw-meta"></div>
+                </div>
+                <div class="d-flex gap-2">
+                    <a class="btn btn-sm btn-outline-primary" id="roster-link" href="#">提交名单</a>
+                    <a class="btn btn-sm btn-outline-secondary" href="/teacher/homework">返回列表</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4">
+            <!-- ==================== 左栏：统计卡 + 分布直方图 ==================== -->
+            <div class="col-lg-7">
+                <!-- 关键指标卡（无已批改样本时显示"—"） -->
+                <div class="row g-3 mb-3">
+                    <div class="col-6 col-md-3">
+                        <div class="card text-center"><div class="card-body py-3">
+                            <div class="small text-muted">平均分</div>
+                            <div class="h4 mb-0" id="stat-avg">—</div>
+                        </div></div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="card text-center"><div class="card-body py-3">
+                            <div class="small text-muted">最高/最低</div>
+                            <div class="h4 mb-0" id="stat-maxmin">—</div>
+                        </div></div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="card text-center"><div class="card-body py-3">
+                            <div class="small text-muted">及格率</div>
+                            <div class="h4 mb-0" id="stat-pass">—</div>
+                        </div></div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <div class="card text-center"><div class="card-body py-3">
+                            <div class="small text-muted">高重复人数</div>
+                            <div class="h4 mb-0 text-danger" id="stat-repeat">—</div>
+                        </div></div>
+                    </div>
+                </div>
+                <!-- 分数分布直方图（ECharts bar，10 档） -->
+                <div class="card">
+                    <div class="card-header bg-white">
+                        <h2 class="h6 mb-0">分数分布（按得分率 10% 一档）</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="hw-chart" id="dist-chart"></div>
+                        <div class="hw-empty d-none" id="chart-empty">暂无已批改样本，无法绘制分布。</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ==================== 右栏：班级排名表（仅成绩发布后） ==================== -->
+            <div class="col-lg-5">
+                <div class="card">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <h2 class="h6 mb-0">班级排名</h2>
+                        <span class="small text-muted" id="submit-rate"></span>
+                    </div>
+                    <div class="card-body">
+                        <div class="hw-table-wrap">
+                            <table class="table table-sm table-hover align-middle mb-0">
+                                <thead>
+                                <tr>
+                                    <th>名次</th>
+                                    <th>学号</th>
+                                    <th>姓名</th>
+                                    <th>得分</th>
+                                    <th>得分率</th>
+                                </tr>
+                                </thead>
+                                <tbody id="rank-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div class="hw-empty d-none" id="rank-empty">
+                            成绩尚未发布或暂无已批改样本——排名在发布成绩后生成。
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer th:replace="~{fragments/layout :: footer}"></footer>
+<!-- 图表页：withCharts=true，加载本地 ECharts -->
+<th:block th:replace="~{fragments/layout :: scripts(true)}"></th:block>
+<script>
+    var homeworkId = HW.pathId();
+    // ECharts 实例（窗口 resize 时统一重排）
+    var distChart = null;
+
+    $(function () {
+        if (!homeworkId) {
+            HW.toast('作业ID无效', 'danger');
+            window.location.href = '/teacher/homework';
+            return;
+        }
+        $('#roster-link').attr('href', '/teacher/homework/' + homeworkId + '/roster');
+        // 先取作业信息（标题/满分），再取分析数据（两者均受"仅限本人作业"约束）
+        HW.get('/api/teacher/homework/' + homeworkId).done(function (hw) {
+            $('#hw-title').text(hw.title || '');
+            $('#hw-meta').text('知识点：' + (hw.knowledgeTag || '—') +
+                ' · 满分 ' + hw.totalScore + ' 分 · 截止 ' + (hw.deadline || '—'));
+            loadAnalysis();
+        });
+        // 图表容器随窗口尺寸变化重排（ECharts 官方推荐做法）
+        $(window).on('resize', function () {
+            if (distChart) { distChart.resize(); }
+        });
+    });
+
+    /** 加载成绩分析：GET /api/teacher/homework/{id}/analysis */
+    function loadAnalysis() {
+        HW.get('/api/teacher/homework/' + homeworkId + '/analysis').done(function (a) {
+            renderStats(a);
+            renderChart(a);
+            renderRanking(a);
+        });
+    }
+
+    /** 关键指标：无已批改样本时后端回 null，这里保持"—" */
+    function renderStats(a) {
+        $('#stat-avg').text(a.avgScore != null ? a.avgScore : '—');
+        $('#stat-maxmin').text(a.maxScore != null ? (a.maxScore + ' / ' + (a.minScore != null ? a.minScore : '—')) : '—');
+        $('#stat-pass').text(a.passRate != null ? (a.passRate + '%') : '—');
+        $('#stat-repeat').text(a.highRepeatCount != null ? a.highRepeatCount : '—');
+        $('#submit-rate').text(a.submitRate != null ? ('提交率 ' + a.submitRate + '%') : '');
+    }
+
+    /** 分布直方图：scoreBuckets 下标0=0-10% … 下标9=90-100%（后端按得分率归档） */
+    function renderChart(a) {
+        var buckets = a.scoreBuckets || [];
+        var hasData = buckets.length === 10 && buckets.some(function (n) { return n > 0; });
+        $('#chart-empty').toggleClass('d-none', hasData);
+        if (!hasData) {
+            if (distChart) { distChart.dispose(); distChart = null; }
+            return;
+        }
+        var el = document.getElementById('dist-chart');
+        if (!distChart) { distChart = echarts.init(el); }
+        var labels = ['0-10%', '10-20%', '20-30%', '30-40%', '40-50%',
+            '50-60%', '60-70%', '70-80%', '80-90%', '90-100%'];
+        // 及格线以下（前6档）红色、以上绿色：与名单页得分条配色口径一致（品牌 slate 色）
+        var colors = ['#dc2626', '#dc2626', '#dc2626', '#dc2626', '#dc2626', '#dc2626',
+            '#16a34a', '#16a34a', '#16a34a', '#16a34a'];
+        distChart.setOption($.extend(HW.chartBase(), {
+            xAxis: { type: 'category', data: labels, axisLabel: { rotate: 30, fontSize: 11, color: '#64748b' }, axisLine: { lineStyle: { color: 'rgba(37,99,235,.15)' } }, axisTick: { show: false } },
+            yAxis: { type: 'value', name: '人数', minInterval: 1, axisLine: { show: false }, splitLine: { lineStyle: { color: 'rgba(37,99,235,.08)', type: 'dashed' } }, axisLabel: { color: '#64748b' } },
+            series: [{
+                type: 'bar',
+                data: buckets.map(function (n, i) {
+                    return { value: n, itemStyle: { color: colors[i], borderRadius: [4, 4, 0, 0] } };
+                }),
+                barMaxWidth: 42
+            }]
+        }));
+    }
+
+    /** 排名表：仅成绩发布后 Service 层生成；未发布时 ranking 为空，显示提示 */
+    function renderRanking(a) {
+        var ranking = a.ranking || [];
+        var $tbody = $('#rank-tbody').empty();
+        $('#rank-empty').toggleClass('d-none', ranking.length > 0);
+        $.each(ranking, function (i, r) {
+            $tbody.append('<tr>' +
+                '<td><span class="badge ' + (r.rank <= 3 ? 'bg-primary' : 'bg-light text-dark border') + '">' +
+                HW.esc(r.rank) + '</span></td>' +
+                '<td>' + HW.dash(r.userNo) + '</td>' +
+                '<td>' + HW.dash(r.realName) + '</td>' +
+                '<td>' + HW.esc(r.score) + '</td>' +
+                '<td>' + HW.scoreBar(r.score, null) + ' ' +
+                (r.scoreRate != null ? '<span class="small">' + r.scoreRate + '%</span>' : '') + '</td>' +
+                '</tr>');
+        });
+    }
+</script>
+</body>
+</html>

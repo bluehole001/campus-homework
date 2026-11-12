@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<!--
+  教师端·提交名单/批改工作台（Batch 5 视图层，仅 ROLE_TEACHER）。
+  数据来自 GET /api/teacher/homework/{id}/roster（Service 层校验仅限本人
+  作业；班内无提交记录的学生合成"未交占位行"，前端灰色标记）。
+  查重高亮预警：isHighRepeat=1 的行整行淡红底（app.css hw-repeat-warn），
+  点击"复核"弹出两份原文对照——本方与对方原文都在名单数据里，按
+  similarStudentId（Batch 5 新增字段）定位对方行，无需额外接口。
+  批改：POST /api/teacher/grade（得分不超过作业满分由 Service 层校验）；
+  一键发布：POST /api/teacher/homework/{id}/publish（幂等）。
+-->
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('提交名单')}"></head>
+<body>
+<nav th:replace="~{fragments/layout :: navbar('teacher-homework')}"></nav>
+
+<main class="hw-main">
+    <div class="container py-4">
+        <!-- 作业信息条：标题/满分/截止/提交进度 + 操作按钮 -->
+        <div class="card mb-3">
+            <div class="card-body d-flex flex-wrap justify-content-between align-items-center gap-3">
+                <div>
+                    <h1 class="h5 mb-1" id="hw-title">加载中…</h1>
+                    <div class="small text-muted" id="hw-meta"></div>
+                </div>
+                <div class="d-flex gap-2 align-items-center">
+                    <a class="btn btn-sm btn-outline-info" id="analysis-link" href="#">成绩分析</a>
+                    <button class="btn btn-sm btn-primary" id="publish-btn" type="button">发布成绩</button>
+                    <a class="btn btn-sm btn-outline-secondary" href="/teacher/homework">返回列表</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <h2 class="h6 mb-0">提交名单</h2>
+                <div class="small text-muted">
+                    <span class="badge bg-secondary">未交</span>
+                    <span class="badge bg-success">按时交</span>
+                    <span class="badge bg-warning text-dark">逾期未交</span>
+                    <span class="badge bg-primary">已批改</span>
+                    <span class="ms-2">高重复行整行淡红，点"复核"对照原文</span>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="hw-table-wrap">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead>
+                        <tr>
+                            <th>学号</th>
+                            <th>姓名</th>
+                            <th>状态</th>
+                            <th>提交时间</th>
+                            <th>查重</th>
+                            <th>得分</th>
+                            <th class="text-end">操作</th>
+                        </tr>
+                        </thead>
+                        <!-- 表体由脚本渲染（数据来自 /api/teacher/homework/{id}/roster） -->
+                        <tbody id="roster-tbody"></tbody>
+                    </table>
+                </div>
+                <div class="hw-empty d-none" id="empty-tip">暂无学生数据。</div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<!-- 查重复核弹窗：本方与最相似同学原文左右对照（数据都在名单里，纯前端展示） -->
+<div class="modal fade" id="review-modal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title h6">查重复核</h3>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="关闭"></button>
+            </div>
+            <div class="modal-body">
+                <div class="small text-muted mb-3" id="review-meta"></div>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <h4 class="h6 mb-2" id="review-a-title">本方</h4>
+                        <div class="hw-content-preview" id="review-a-body"></div>
+                    </div>
+                    <div class="col-md-6">
+                        <h4 class="h6 mb-2" id="review-b-title">最相似同学</h4>
+                        <div class="hw-content-preview" id="review-b-body"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 批改抽屉（offcanvas）：查看正文/附件 + 打分写评语 -->
+<div class="offcanvas offcanvas-end" tabindex="-1" id="grade-drawer" style="width:520px">
+    <div class="offcanvas-header">
+        <h3 class="offcanvas-title h6" id="drawer-title">批改</h3>
+        <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="关闭"></button>
+    </div>
+    <div class="offcanvas-body">
+        <dl class="row small mb-3">
+            <dt class="col-4 text-muted">学号/姓名</dt>
+            <dd class="col-8" id="drawer-student"></dd>
+            <dt class="col-4 text-muted">提交状态</dt>
+            <dd class="col-8" id="drawer-status"></dd>
+            <dt class="col-4 text-muted">附件</dt>
+            <dd class="col-8" id="drawer-file"></dd>
+        </dl>
+        <h4 class="h6 mb-2">作业正文</h4>
+        <div class="hw-content-preview mb-3" id="drawer-content"></div>
+        <form id="grade-form">
+            <input type="hidden" id="grade-submission-id">
+            <div class="mb-3">
+                <label class="form-label" for="grade-score">得分（<span id="score-max">—</span> 分以内）</label>
+                <input class="form-control" id="grade-score" type="number" min="0" step="0.5" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="grade-comment">教师评语（可留空，建议填写）</label>
+                <textarea class="form-control" id="grade-comment" rows="5" maxlength="2000"></textarea>
+            </div>
+            <button class="btn btn-primary w-100" type="submit" id="grade-submit-btn">保存批改</button>
+        </form>
+    </div>
+</div>
+
+<footer th:replace="~{fragments/layout :: footer}"></footer>
+<th:block th:replace="~{fragments/layout :: scripts(false)}"></th:block>
+<script>
+    // 作业ID：由页面路由 /teacher/homework/{id}/roster 的路径数字段提取
+    var homeworkId = HW.pathId();
+    // 作业公共信息（标题/满分/成绩发布状态）与名单缓存（复核弹窗按 studentId 定位对方行）
+    var homework = null;
+    var rosterRows = [];
+
+    $(function () {
+        if (!homeworkId) {
+            HW.toast('作业ID无效', 'danger');
+            window.location.href = '/teacher/homework';
+            return;
+        }
+        // 先取作业信息（标题/满分/发布状态），再取名单——两者都受"仅限本人作业"约束
+        HW.get('/api/teacher/homework/' + homeworkId).done(function (hw) {
+            homework = hw;
+            renderHeader(hw);
+            loadRoster();
+        });
+        $('#grade-form').on('submit', onGrade);
+    });
+
+    /** 头部信息条：标题、知识点、截止、已交 x/y、成绩状态与入口链接 */
+    function renderHeader(hw) {
+        $('#hw-title').text(hw.title || '');
+        $('#hw-meta').text('知识点：' + (hw.knowledgeTag || '—') +
+            ' · 满分 ' + hw.totalScore + ' 分 · 截止 ' + (hw.deadline || '—') +
+            ' · 已交 ' + hw.submitCount + '/' + hw.studentCount);
+        $('#analysis-link').attr('href', '/teacher/homework/' + homeworkId + '/analysis');
+        // 成绩发布状态与按钮态（已发布则禁用按钮，发布接口本身幂等）
+        if (hw.isScorePublished === 1) {
+            $('#publish-btn').prop('disabled', true).text('成绩已发布');
+        } else {
+            $('#publish-btn').prop('disabled', false).text('发布成绩');
+        }
+        // 事件绑定一次即可（头部是静态 DOM）
+        $('#publish-btn').off('click').on('click', onPublish);
+    }
+
+    /** 加载提交名单：GET /api/teacher/homework/{id}/roster */
+    function loadRoster() {
+        HW.get('/api/teacher/homework/' + homeworkId + '/roster').done(function (rows) {
+            rosterRows = rows || [];
+            renderRows(rosterRows);
+        });
+    }
+
+    /** 渲染名单行：未交灰弱、高重复淡红、查重单元格、批改入口 */
+    function renderRows(rows) {
+        var $tbody = $('#roster-tbody').empty();
+        $('#empty-tip').toggleClass('d-none', rows.length > 0);
+        $.each(rows, function (i, row) {
+            // 行样式：高重复预警整行淡红；未交（无提交记录）整行灰弱
+            var rowCls = row.isHighRepeat === 1 ? 'hw-repeat-warn'
+                : (row.submissionId == null ? 'hw-unsubmitted' : '');
+            var actions = '';
+            if (row.submissionId != null) {
+                // 有提交记录才可批改（未交占位行 submissionId 为 null）
+                actions = '<button class="btn btn-sm btn-primary" data-grade="' + HW.esc(row.submissionId) +
+                    '">批改</button>';
+            } else {
+                actions = '<span class="text-muted small">—</span>';
+            }
+            var scoreCell = HW.scoreBar(row.score, homework ? homework.totalScore : null);
+            $tbody.append('<tr class="' + rowCls + '">' +
+                '<td>' + HW.dash(row.userNo) + '</td>' +
+                '<td>' + HW.dash(row.realName) + '</td>' +
+                '<td>' + HW.statusBadge(row.submitStatus) + '</td>' +
+                '<td>' + HW.fmtDateTime(row.submitTime) + '</td>' +
+                '<td>' + HW.repeatCell(row) + '</td>' +
+                '<td>' + scoreCell + '</td>' +
+                '<td class="text-end">' + actions + '</td>' +
+                '</tr>');
+        });
+        bindRowEvents();
+    }
+
+    /** 表体事件委托：批改按钮打开抽屉、复核链接打开对照弹窗（表体动态渲染，用委托） */
+    function bindRowEvents() {
+        var $tbody = $('#roster-tbody');
+        $tbody.off('click', '[data-grade]').on('click', '[data-grade]', function () {
+            var subId = String($(this).data('grade'));
+            // 按 submissionId 在缓存名单中定位该行（数据已在内存，无需再请求）
+            var row = findRowBySubmission(subId);
+            if (row) { openDrawer(row); }
+        });
+        $tbody.off('click', '.repeat-review').on('click', '.repeat-review', function () {
+            var stuId = String($(this).data('stu'));
+            var simStuId = String($(this).data('simstu'));
+            openReview(findRowByStudent(stuId), findRowByStudent(simStuId));
+        });
+    }
+
+    /** 按提交记录ID定位名单行 */
+    function findRowBySubmission(subId) {
+        for (var i = 0; i < rosterRows.length; i++) {
+            if (String(rosterRows[i].submissionId) === subId) { return rosterRows[i]; }
+        }
+        return null;
+    }
+
+    /** 按学生ID定位名单行（查重复核定位对方原文行） */
+    function findRowByStudent(stuId) {
+        if (!stuId) { return null; }
+        for (var i = 0; i < rosterRows.length; i++) {
+            if (String(rosterRows[i].studentId) === stuId) { return rosterRows[i]; }
+        }
+        return null;
+    }
+
+    /** 打开批改抽屉：回显正文/附件/已有分数与评语 */
+    function openDrawer(row) {
+        $('#grade-submission-id').val(row.submissionId);
+        $('#drawer-title').text('批改：' + (row.realName || '') + '（' + (row.userNo || '') + '）');
+        $('#drawer-student').text((row.userNo || '—') + ' / ' + (row.realName || '—'));
+        $('#drawer-status').html(HW.statusBadge(row.submitStatus));
+        $('#drawer-file').html(HW.fileLink(row.fileUrl, row.fileName));
+        $('#drawer-content').text(row.contentText || '（仅附件提交，无正文）');
+        $('#score-max').text(homework ? homework.totalScore : '—');
+        var $score = $('#grade-score');
+        $score.attr('max', homework ? homework.totalScore : 1000);
+        $score.val(row.score != null ? row.score : '');
+        $('#grade-comment').val(row.teacherComment || '');
+        // Bootstrap 5 offcanvas 组件实例
+        new bootstrap.Offcanvas(document.getElementById('grade-drawer')).show();
+    }
+
+    /** 打开查重复核弹窗：本方与最相似同学原文左右对照 */
+    function openReview(a, b) {
+        if (!a) { HW.toast('未找到该提交', 'warning'); return; }
+        var sim = a.similarityRate != null ? (Number(a.similarityRate) * 100).toFixed(1) + '%' : '—';
+        $('#review-meta').text('相似度 ' + sim + '（阈值 85% 触发预警）· 复核仅供人工判断，不影响系统结论');
+        $('#review-a-title').text('本方：' + (a.realName || '') + '（' + (a.userNo || '') + '）');
+        $('#review-a-body').text(a.contentText || '（仅附件提交，无正文）');
+        if (b) {
+            $('#review-b-title').text('最相似同学：' + (b.realName || '') + '（' + (b.userNo || '') + '）');
+            $('#review-b-body').text(b.contentText || '（仅附件提交，无正文）');
+        } else {
+            $('#review-b-title').text('最相似同学');
+            $('#review-b-body').text('（对方提交不在当前名单中，可能已被删除）');
+        }
+        new bootstrap.Modal(document.getElementById('review-modal')).show();
+    }
+
+    /** 保存批改：POST /api/teacher/grade（GradeSubmitDTO 契约） */
+    function onGrade(e) {
+        e.preventDefault();
+        var body = {
+            submissionId: Number($('#grade-submission-id').val()),
+            score: Number($('#grade-score').val()),
+            teacherComment: $('#grade-comment').val() || null
+        };
+        if (body.score == null || isNaN(body.score)) { HW.toast('请输入得分', 'warning'); return; }
+        $('#grade-submit-btn').prop('disabled', true).text('保存中…');
+        HW.postJson('/api/teacher/grade', body).done(function () {
+            HW.toast('批改已保存', 'success');
+            bootstrap.Offcanvas.getInstance(document.getElementById('grade-drawer'))
+                .hide();
+            loadRoster(); // 刷新名单回显最新分数与状态
+        }).always(function () {
+            $('#grade-submit-btn').prop('disabled', false).text('保存批改');
+        });
+    }
+
+    /** 一键发布成绩：POST /api/teacher/homework/{id}/publish（幂等） */
+    function onPublish() {
+        if (!window.confirm('确认发布本作业成绩？发布后学生可见分数、评语与查重结论，且不可再重交。')) {
+            return;
+        }
+        $('#publish-btn').prop('disabled', true).text('发布中…');
+        HW.postJson('/api/teacher/homework/' + homeworkId + '/publish', {}).done(function () {
+            HW.toast('成绩已发布', 'success');
+            // 重新拉取作业信息刷新按钮态（发布后按钮禁用）
+            HW.get('/api/teacher/homework/' + homeworkId).done(renderHeader);
+        }).always(function () {
+            if (homework && homework.isScorePublished !== 1) {
+                $('#publish-btn').prop('disabled', false).text('发布成绩');
+            }
+        });
+    }
+</script>
+</body>
+</html>

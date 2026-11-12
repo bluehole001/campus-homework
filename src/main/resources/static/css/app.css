@@ -1,0 +1,701 @@
+/*
+ * 应用自定义样式（Batch 5 视图层 · 浅色科技风 Light Tech 版）：
+ * 在「Thymeleaf + Bootstrap 5 + jQuery + ECharts 5」技术栈不变的前提下，
+ * 仅升级设计层——通过重映射 Bootstrap 5.3 的 CSS 变量（配色 / 圆角 / 阴影 /
+ * 字体）+ 局部组件精修，把界面定调为"冰蓝底 + 玻璃拟态卡片 + 蓝青渐变点缀"
+ * 的科技风控制台。不引入任何外部资源（字体走系统栈、图标走内联 SVG、网格线
+ * 由 CSS 渐变绘制），保持离线可用；不覆盖 Bootstrap 的组件结构，只改外观令牌。
+ *
+ * 设计令牌（Light Tech）：
+ *   页面底     #F3F6FC 冰蓝浅底 + 30px 极细科技网格线 rgba(37,99,235,.03)
+ *   主色(操作) #2563EB 科技蓝   悬停 #1D4ED8
+ *   科技青(点缀) #22D3EE / #06B6D4 与主色组成 135° 蓝→青渐变
+ *   深色面(导航) #0F1B33 深空蓝  渐变到 #1B3A6B
+ *   强调(高亮) #F59E0B 琥珀金（角色徽章等语义强调保留）
+ *   成功/危险  #16A34A / #DC2626
+ *   中性(文字/边框) slate 灰阶：#1E293B / #475569 / #94A3B8
+ * 浅色主题：所有卡面/图表区均为浅色（玻璃白），深色文字（与 IDE 浅色主题一致）。
+ *
+ * 玻璃拟态实现要点：
+ *   1) .card 半透明白 rgba(255,255,255,.75) + backdrop-filter: blur(12px)，
+ *      网格线与页面光晕会从卡片下方"透"出来，形成悬浮感；
+ *   2) 页面网格线画在 main.hw-main::before（内容区）与 .hw-login-wrap::before
+ *      （登录页），导航栏不吃网格保持干净；卡片在网格之上、backdrop-filter
+ *      会采样其背后的网格——网格在卡内模糊、卡外清晰，悬浮感来源；
+ *   3) 不支持 backdrop-filter 的旧浏览器由 @supports 兜底为不透明浅面，
+ *      功能与可读性不受影响；
+ *   4) --bs-body-bg 保持纯白（组件默认底），页面冰蓝底由 body 显式设置，
+ *      避免逐个覆盖 modal/offcanvas/dropdown/list-group 的背景。
+ *
+ * 针对 Bootstrap 5.3.3 本地文件的实测结论（沿用）：
+ *   1) .btn-primary / .pagination / .progress / .page-link 把颜色写成字面量，
+ *      改 :root 无效，必须用组件级选择器覆盖（见第五节）；
+ *   2) .bg-* / .text-bg-* / .badge / .alert / .table 全部走 CSS 变量，
+ *      改 :root 即全站生效；表格单元格染色/悬停走 --bs-table-* 变量机制；
+ *   3) 渐变走 background-image，与 Bootstrap 用 background-color 设的底色不冲突，
+ *      无需 !important 强抢。
+ */
+
+/* =====================================================================
+ * 一、全局设计令牌：覆盖 Bootstrap 的 :root 变量（var 驱动的部分在此生效）
+ * ===================================================================== */
+:root {
+    /* 主色与链接：影响 .bg-primary / .text-primary / .link-primary / .text-bg-primary / 徽章 */
+    --bs-primary-rgb: 37, 99, 235;          /* #2563EB */
+    --bs-primary: #2563eb;
+    --bs-primary-text-emphasis: #1e40af;
+    --bs-primary-bg-subtle: #dbeafe;
+    --bs-primary-border-subtle: #bfdbfe;
+    --bs-link-color: #2563eb;
+    --bs-link-color-rgb: 37, 99, 235;
+    --bs-link-hover-color: #1d4ed8;
+    --bs-link-hover-color-rgb: 29, 78, 216;
+
+    /* 语义色重映射：比 Bootstrap 默认更现代（影响 bg-/text-bg-/border-/subtle 全套） */
+    --bs-success-rgb: 22, 163, 74;   /* #16A34A */
+    --bs-success: #16a34a;
+    --bs-success-text-emphasis: #14532d;
+    --bs-success-bg-subtle: #dcfce7;
+    --bs-success-border-subtle: #bbf7d0;
+    --bs-danger-rgb: 220, 38, 38;    /* #DC2626 */
+    --bs-danger: #dc2626;
+    --bs-danger-text-emphasis: #991b1b;
+    --bs-danger-bg-subtle: #fee2e2;
+    --bs-danger-border-subtle: #fecaca;
+    --bs-warning-rgb: 245, 158, 11;  /* #F59E0B */
+    --bs-warning: #f59e0b;
+    --bs-warning-text-emphasis: #854d0e;
+    --bs-warning-bg-subtle: #fef3c7;
+    --bs-warning-border-subtle: #fde68a;
+    --bs-info-rgb: 14, 165, 233;     /* #0EA5E9 */
+    --bs-info: #0ea5e9;
+    --bs-info-text-emphasis: #0c4e63;
+    --bs-info-bg-subtle: #e0f2fe;
+    --bs-info-border-subtle: #bae6fd;
+    --bs-secondary-rgb: 100, 116, 139; /* #64748B slate-500（弱化徽章/次要） */
+    --bs-secondary: #64748b;
+    --bs-secondary-text-emphasis: #334155;
+    --bs-secondary-bg-subtle: #f1f5f9;
+    --bs-secondary-border-subtle: #e2e8f0;
+
+    /* 中性面：正文、弱化文字、边框、聚焦环（--bs-body-bg 保持纯白，见文件头说明） */
+    --bs-body-color-rgb: 30, 41, 59;     /* #1E293B slate-900 */
+    --bs-body-color: #1e293b;
+    --bs-emphasis-color-rgb: 15, 23, 42; /* #0F172A */
+    --bs-emphasis-color: #0f172a;
+    --bs-secondary-color-rgb: 71, 85, 105; /* #475569 slate-600 */
+    --bs-secondary-color: #475569;
+    --bs-tertiary-color-rgb: 148, 163, 184; /* #94A3B8 slate-400 */
+    --bs-tertiary-color: #94a3b8;
+    --bs-secondary-bg-rgb: 241, 245, 249;  /* #F1F5F9 slate-100 */
+    --bs-secondary-bg: #f1f5f9;
+    --bs-tertiary-bg-rgb: 248, 250, 252;
+    --bs-tertiary-bg: #f8fafc;
+    --bs-border-color: rgba(37, 99, 235, .12);   /* 科技风：发丝线带一丝蓝调 */
+    --bs-border-color-translucent: rgba(37, 99, 235, .10);
+    --bs-highlight-bg: #fef3c7;
+    --bs-focus-ring-color: rgba(37, 99, 235, .16); /* 聚焦环改品牌蓝、更柔 */
+    --bs-form-valid-color: #16a34a;
+    --bs-form-valid-border-color: #16a34a;
+    --bs-form-invalid-color: #dc2626;
+    --bs-form-invalid-border-color: #dc2626;
+
+    /* 圆角统一放大：卡片/按钮/输入框/徽章/模态框全部引用这些变量 */
+    --bs-border-radius: .625rem;       /* 10px */
+    --bs-border-radius-sm: .4rem;
+    --bs-border-radius-lg: .875rem;    /* 14px */
+    --bs-border-radius-xl: 1.125rem;
+
+    /* 阴影令牌：Bootstrap 自带 .shadow-* 工具类一并改为弥散浅蓝投影 */
+    --bs-box-shadow: 0 10px 30px rgba(37, 99, 235, .10);
+    --bs-box-shadow-sm: 0 1px 3px rgba(37, 99, 235, .06);
+    --bs-box-shadow-lg: 0 16px 40px rgba(37, 99, 235, .14);
+
+    /* 字体：系统栈（无需外部字体文件，离线可用），字号略收紧提升层级 */
+    --bs-font-sans-serif: -apple-system, BlinkMacSystemFont, "Segoe UI",
+        "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei",
+        Roboto, "Helvetica Neue", Arial, "Noto Sans SC", sans-serif;
+    --bs-body-font-size: .9rem;
+    --bs-body-font-weight: 400;
+    --bs-body-line-height: 1.55;
+
+    /* 自定义令牌（供下方组件引用）——Light Tech 核心变量 */
+    --hw-page-bg: #f3f6fc;                                   /* 冰蓝页面底 */
+    --hw-grid-line: rgba(37, 99, 235, .03);                 /* 30px 科技网格线 */
+    --hw-tech-cyan: #22d3ee;                                /* 科技青（点缀） */
+    --hw-tech-cyan-deep: #06b6d4;                           /* 深科技青（悬停收束） */
+    --hw-tech-grad: linear-gradient(135deg, #1d4ed8 0%, #2563eb 40%, #22d3ee 100%);
+    --hw-tech-grad-hover: linear-gradient(135deg, #1e40af 0%, #1d4ed8 40%, #06b6d4 100%);
+    --hw-glow-blue: 0 8px 24px rgba(37, 99, 235, .30), 0 2px 8px rgba(6, 182, 212, .18);
+    --hw-glass-bg: rgba(255, 255, 255, .75);                /* 玻璃卡面 */
+    --hw-glass-bg-strong: rgba(255, 255, 255, .88);         /* 表单/弹窗等需更高可读性的面 */
+    --hw-glass-grad: linear-gradient(160deg, rgba(255, 255, 255, .82) 0%, rgba(255, 255, 255, .68) 100%);
+    --hw-glass-border: rgba(255, 255, 255, .65);            /* 玻璃高光描边 */
+    --hw-glass-edge: rgba(37, 99, 235, .14);                /* 玻璃外缘淡蓝描边 */
+    --hw-blur: blur(12px);
+    --hw-shadow-sm: 0 1px 2px rgba(37, 99, 235, .05), 0 4px 14px rgba(37, 99, 235, .07);
+    --hw-shadow-md: 0 4px 12px rgba(37, 99, 235, .10), 0 10px 30px rgba(37, 99, 235, .08);
+    --hw-shadow-lg: 0 12px 32px rgba(37, 99, 235, .14), 0 4px 12px rgba(6, 182, 212, .10);
+    --hw-brand-grad: linear-gradient(135deg, #0f1b33 0%, #16244a 55%, #1b3a6b 100%);
+    --hw-accent-grad: linear-gradient(90deg, #2563eb 0%, #22d3ee 100%);
+    --hw-cap-grad: linear-gradient(180deg, rgba(243, 248, 255, .9) 0%, rgba(236, 243, 252, .7) 100%);
+}
+
+/* =====================================================================
+ * 二、页面骨架：冰蓝底 + 顶部品牌光晕 + 内容区 30px 科技网格
+ * ===================================================================== */
+html { -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+body {
+    /* 冰蓝浅底：顶部一层极淡的品牌光晕，网格线由 main.hw-main::before 单独绘制 */
+    background-color: var(--hw-page-bg);
+    background-image:
+        radial-gradient(1100px 420px at 50% -160px, rgba(37, 99, 235, .08), transparent 70%),
+        radial-gradient(900px 500px at 100% 110%, rgba(6, 182, 212, .05), transparent 60%),
+        linear-gradient(180deg, #f4f7fd 0%, #f3f6fc 100%);
+    background-attachment: fixed;
+    color: var(--bs-body-color);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* 主内容容器：占据剩余高度，页脚自然沉底 */
+main.hw-main {
+    flex: 1 0 auto;
+    padding-bottom: 2.5rem;
+    position: relative;   /* 网格伪元素的定位参照 */
+}
+
+/* 30px × 30px 极细科技网格线：只铺在内容区（导航栏/登录页保持干净）。
+   画在 ::before（z-index:0），玻璃卡片在其上（z-index:1），
+   backdrop-filter 会采样卡片背后的网格——网格在卡内模糊、卡外清晰，悬浮感来源。 */
+main.hw-main::before {
+    content: "";
+    position: absolute; inset: 0;
+    z-index: 0;
+    background-image:
+        linear-gradient(to right, var(--hw-grid-line) 1px, transparent 1px),
+        linear-gradient(to bottom, var(--hw-grid-line) 1px, transparent 1px);
+    background-size: 30px 30px;
+    pointer-events: none;
+}
+/* 内容层浮于网格之上（.container 本身已 position:relative，这里兜底显式声明） */
+main.hw-main > .container { position: relative; z-index: 1; }
+
+/* 标题排版：轻微收紧字距，层级更清晰 */
+.hw-main h1, .hw-main h2, .hw-main h3 { letter-spacing: -.01em; }
+
+/* =====================================================================
+ * 三、玻璃拟态卡片：半透明白 + backdrop-filter 毛玻璃 + 弥散浅蓝阴影
+ * ===================================================================== */
+.card {
+    --bs-card-bg: var(--hw-glass-bg);
+    --bs-card-cap-bg: transparent;
+    --bs-card-border-color: var(--hw-glass-edge);
+    background-color: var(--hw-glass-bg);
+    background-image: var(--hw-glass-grad);
+    backdrop-filter: var(--hw-blur);
+    -webkit-backdrop-filter: var(--hw-blur);
+    border: 1px solid var(--hw-glass-border);
+    outline: 1px solid var(--hw-glass-edge);   /* 外侧再包一道淡蓝描边，勾勒玻璃边缘 */
+    border-radius: var(--bs-border-radius-lg);
+    box-shadow: var(--hw-shadow-sm);
+    /* 头部与主体衔接处不留生硬直角 */
+    overflow: hidden;
+}
+/* 玻璃卡内的正文区再透一点，让网格隐约可透（保持文字可读） */
+.card-body { background-color: transparent; }
+
+/* 卡片头：更亮一档的玻璃面 + 发丝下划线 + 蓝青渐变下边。
+   注意 Bootstrap 把 --bs-card-cap-bg 用在 background-color 上（渐变无效），
+   因此这里直接给 background-image；页面里的 .bg-white 只设 background-color，
+   不会盖掉 background-image，两种写法都能得到渐变头。 */
+.card-header {
+    background-color: var(--hw-glass-bg-strong);
+    background-image: var(--hw-cap-grad);
+    border-bottom: 1px solid var(--hw-glass-edge);
+    box-shadow: inset 0 -1px 0 rgba(37, 99, 235, .06), inset 0 -2px 0 -1px rgba(34, 211, 238, .25);
+    padding: .85rem 1.1rem;
+    font-weight: 600;
+}
+/* 带强调条的卡片（可选增强：给页面加 .hw-card-accent 即出现顶部蓝青渐变条） */
+.hw-card-accent { position: relative; }
+.hw-card-accent::before {
+    content: "";
+    position: absolute; inset: 0 0 auto 0; height: 3px;
+    background: var(--hw-accent-grad);
+    border-radius: var(--bs-border-radius-lg) var(--bs-border-radius-lg) 0 0;
+    box-shadow: 0 1px 6px rgba(34, 211, 238, .35);
+}
+
+/* 可交互卡片悬停轻微上浮（仅用于明确标注的卡片，避免误伤表格容器） */
+.hw-card-hover { transition: box-shadow .2s ease, transform .2s ease; }
+.hw-card-hover:hover { box-shadow: var(--hw-shadow-md); transform: translateY(-2px); }
+
+/* 统计数字卡（看板可选增强；当前页面未用则不生效，留作布局片段复用） */
+.hw-stat {
+    border-radius: var(--bs-border-radius-lg);
+    background-color: var(--hw-glass-bg);
+    background-image: var(--hw-glass-grad);
+    backdrop-filter: var(--hw-blur);
+    -webkit-backdrop-filter: var(--hw-blur);
+    border: 1px solid var(--hw-glass-border);
+    outline: 1px solid var(--hw-glass-edge);
+    box-shadow: var(--hw-shadow-sm);
+    padding: 1.1rem 1.25rem;
+    position: relative; overflow: hidden;
+}
+.hw-stat::after {
+    content: ""; position: absolute; right: -30px; top: -30px;
+    width: 90px; height: 90px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(34, 211, 238, .14), transparent 70%);
+}
+.hw-stat .hw-stat-value { font-size: 1.7rem; font-weight: 700; color: #1e293b; line-height: 1.1; }
+.hw-stat .hw-stat-label { font-size: .78rem; color: #64748b; font-weight: 500; }
+
+/* =====================================================================
+ * 四、表格：透明表体浮在玻璃卡上 + 浅灰蓝表头 + 悬停高亮
+ *    Bootstrap 5.3 用 --bs-table-* 变量给单元格染色/悬停/描边，
+ *    因此优先改变量；显式规则仅用于表头与特殊状态行。
+ * ===================================================================== */
+.table {
+    --bs-table-bg: transparent;                       /* 表体透明，透出玻璃卡与网格 */
+    --bs-table-border-color: rgba(37, 99, 235, .07); /* 发丝横线，带一丝蓝调 */
+    --bs-table-hover-bg: rgba(59, 130, 246, .07);    /* 行悬停：淡蓝高亮 */
+    --bs-table-striped-bg: rgba(241, 245, 249, .5);
+    margin-bottom: 0;
+}
+/* 表头：浅灰蓝面 + 深色加粗 + 去竖线，整体更克制 */
+.table thead th {
+    background-color: rgba(241, 245, 249, .7);
+    color: #475569;
+    font-weight: 600;
+    font-size: .8rem;
+    letter-spacing: .02em;
+    border-bottom: 1px solid rgba(37, 99, 235, .16) !important;
+    border-top: 0;
+    padding: .7rem .9rem;
+    white-space: nowrap;
+}
+.table tbody td {
+    vertical-align: middle;
+    padding: .65rem .9rem;
+}
+.table-hover tbody tr:hover > td { color: #0f172a; }
+
+/* 查重高亮预警行：高重复提交整行淡红底 + 左侧红色标记，教师一眼定位 */
+tr.hw-repeat-warn > td {
+    box-shadow: inset 3px 0 0 #dc2626, inset 0 0 0 9999px rgba(220, 38, 38, .06);
+}
+/* 未交占位行：淡灰弱化，与已提交行区分 */
+tr.hw-unsubmitted > td {
+    color: #94a3b8;
+    box-shadow: inset 0 0 0 9999px rgba(248, 250, 252, .6);
+}
+
+/* =====================================================================
+ * 五、组件级颜色覆盖（Bootstrap 把颜色写成字面量，:root 改不动这些）
+ * ===================================================================== */
+/* 主按钮：135° 蓝→青渐变（Light Tech 签名）+ 立体投影 + 悬停上浮发光。
+   注意：Bootstrap 用 --bs-btn-bg 设 background-color，渐变走 background-image
+   叠加其上且完全覆盖，二者不冲突；disabled 态单独给淡渐变。 */
+.btn-primary {
+    --bs-btn-bg: #2563eb; --bs-btn-border-color: transparent;
+    --bs-btn-hover-bg: #1d4ed8; --bs-btn-hover-border-color: transparent;
+    --bs-btn-active-bg: #1e40af; --bs-btn-active-border-color: transparent;
+    --bs-btn-disabled-bg: #a8c4f8; --bs-btn-disabled-border-color: transparent;
+    --bs-btn-focus-shadow-rgb: 37, 99, 235;
+    background-image: var(--hw-tech-grad);
+    box-shadow: 0 2px 6px rgba(37, 99, 235, .28), 0 1px 4px rgba(6, 182, 212, .15);
+    transition: box-shadow .15s ease, transform .15s ease, background-image .15s ease;
+}
+.btn-primary:hover {
+    background-image: var(--hw-tech-grad-hover);
+    box-shadow: var(--hw-glow-blue);
+    transform: translateY(-2px);
+}
+.btn-primary:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 6px rgba(30, 64, 175, .3);
+}
+.btn-primary:disabled, .btn-primary.disabled {
+    background-image: linear-gradient(135deg, #bfd3fa 0%, #a8c4f8 60%, #a5e6f4 100%);
+    box-shadow: none;
+    transform: none;
+}
+
+/* 描边主按钮：同步品牌蓝 */
+.btn-outline-primary {
+    --bs-btn-color: #2563eb; --bs-btn-border-color: rgba(37, 99, 235, .25);
+    --bs-btn-hover-bg: #2563eb; --bs-btn-hover-border-color: #2563eb;
+    --bs-btn-hover-color: #fff;
+    --bs-btn-active-bg: #2563eb; --bs-btn-active-border-color: #2563eb;
+    --bs-btn-active-color: #fff;
+    --bs-btn-focus-shadow-rgb: 37, 99, 235;
+}
+
+/* 次要按钮：slate 灰，比 Bootstrap 灰更沉稳 */
+.btn-secondary {
+    --bs-btn-bg: #64748b; --bs-btn-border-color: #64748b;
+    --bs-btn-hover-bg: #475569; --bs-btn-hover-border-color: #475569;
+    --bs-btn-active-bg: #334155; --bs-btn-active-border-color: #334155;
+    --bs-btn-focus-shadow-rgb: 100, 116, 139;
+}
+.btn-outline-secondary {
+    --bs-btn-color: #475569; --bs-btn-border-color: rgba(148, 163, 184, .5);
+    --bs-btn-hover-bg: rgba(241, 245, 249, .8); --bs-btn-hover-border-color: rgba(148, 163, 184, .5);
+    --bs-btn-hover-color: #1e293b;
+    --bs-btn-active-bg: #e2e8f0; --bs-btn-active-color: #1e293b;
+    --bs-btn-focus-shadow-rgb: 148, 163, 184;
+}
+
+/* 柔和渐变次级按钮（大厂后台的"次要主操作"语言）：冰蓝玻璃底 + 品牌蓝文字 +
+   轻微立体阴影 + 悬停上浮。比纯描边按钮更有质感，又不与实心主按钮抢层级。
+   Bootstrap 用 --bs-btn-bg 设 background-color，这里把它留空、渐变走 background-image。 */
+.btn-soft {
+    --bs-btn-bg: transparent; --bs-btn-color: #1d4ed8; --bs-btn-border-color: rgba(37, 99, 235, .18);
+    --bs-btn-hover-bg: transparent; --bs-btn-hover-border-color: rgba(37, 99, 235, .3);
+    --bs-btn-hover-color: #1e40af;
+    --bs-btn-active-bg: transparent; --bs-btn-active-border-color: rgba(37, 99, 235, .3);
+    --bs-btn-active-color: #1e40af;
+    --bs-btn-disabled-color: #9aa1ad; --bs-btn-disabled-border-color: transparent;
+    --bs-btn-focus-shadow-rgb: 37, 99, 235;
+    background-image: linear-gradient(160deg, rgba(245, 248, 255, .9) 0%, rgba(227, 241, 254, .8) 100%);
+    box-shadow: 0 1px 3px rgba(37, 99, 235, .12);
+    transition: box-shadow .15s ease, transform .15s ease;
+}
+.btn-soft:hover {
+    background-image: linear-gradient(160deg, rgba(238, 246, 255, .95) 0%, rgba(216, 235, 252, .85) 100%);
+    box-shadow: 0 4px 14px rgba(37, 99, 235, .18), 0 2px 6px rgba(6, 182, 212, .12);
+    transform: translateY(-1px);
+}
+.btn-soft:active { transform: translateY(0); box-shadow: 0 1px 3px rgba(37, 99, 235, .15); }
+.btn-soft:disabled, .btn-soft.disabled {
+    background-image: linear-gradient(160deg, rgba(247, 248, 250, .9) 0%, rgba(238, 241, 245, .8) 100%);
+    box-shadow: none; transform: none;
+}
+
+/* 全站按钮：更圆、更柔和的过渡 */
+.btn { border-radius: .5rem; font-weight: 500; transition: all .15s ease; }
+.btn-sm { border-radius: .45rem; }
+
+/* 分页条：品牌蓝激活 + 圆角胶囊（--bs-pagination-active-bg 是字面量，必须组件级覆盖） */
+.pagination {
+    --bs-pagination-active-bg: #2563eb; --bs-pagination-active-border-color: #2563eb;
+    --bs-pagination-color: #2563eb; --bs-pagination-hover-bg: rgba(241, 245, 249, .8);
+    --bs-pagination-focus-color: #1d4ed8; --bs-pagination-focus-bg: rgba(241, 245, 249, .8);
+    --bs-pagination-disabled-color: #cbd5e1;
+    --bs-pagination-border-radius: .45rem;
+    gap: .25rem;
+}
+.page-link { border-color: rgba(37, 99, 235, .14); font-weight: 500; }
+.page-item.active .page-link { box-shadow: 0 2px 8px rgba(37, 99, 235, .35); }
+
+/* 进度条（得分率）：默认条改品牌蓝；页面里的 bg-success/bg-danger 仍按语义覆盖 */
+.progress {
+    --bs-progress-bar-bg: #2563eb;
+    --bs-progress-height: 8px;
+    --bs-progress-border-radius: .4rem;
+    background-color: rgba(37, 99, 235, .08);
+}
+.progress-bar { transition: width .4s ease; }
+
+/* 徽章：胶囊化 + 弱化硬边框感 */
+.badge { border-radius: .5rem; font-weight: 600; letter-spacing: .01em; padding: .35em .6em; }
+.badge.bg-light { background-color: rgba(241, 245, 249, .8) !important; color: #475569 !important; border: 1px solid rgba(37, 99, 235, .14); }
+
+/* 表单控件（现代大厂后台质感）：去掉偏深的原生边框，改极浅灰 #E0E0E0；
+   加大内边距让文字不贴边；focus 时外圈产生柔和的蓝色光晕（双层柔光而非硬环）。
+   textarea 同为 .form-control 类自动继承；datetime-local/number/file 原生控件同样生效。 */
+.form-control, .form-select {
+    border: 1px solid #e0e0e0;
+    border-radius: .5rem;
+    padding: .55rem .9rem;               /* 比默认 .375rem .75rem 更透气，文字离边 */
+    background-color: rgba(255, 255, 255, .85);
+    color: #1e293b;
+    transition: border-color .15s ease, box-shadow .15s ease;
+}
+textarea.form-control { resize: vertical; }
+input[type="file"].form-control { padding: .5rem .9rem; }
+/* select 保留右侧 2.25rem 空间给 Bootstrap 的下拉箭头（background-image 里的 SVG） */
+.form-select { padding-right: 2.25rem; }
+.form-control:focus, .form-select:focus {
+    border-color: #2563eb;
+    /* 柔和光晕：贴边 4px 淡晕 + 外层 12px 扩散微光（蓝→青双层），比硬聚焦环更柔 */
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, .10), 0 0 12px rgba(6, 182, 212, .10);
+}
+.form-control-sm, .form-select-sm { border-radius: .45rem; padding: .4rem .75rem; }
+/* 小尺寸 select 同样要给右侧箭头留白（各看板/管理页的筛选下拉都是 form-select-sm） */
+.form-select-sm { padding-right: 1.8rem; }
+::placeholder { color: #94a3b8; opacity: 1; }
+.form-label { font-weight: 500; color: #334155; margin-bottom: .45rem; }
+/* 勾选框同步同一套聚焦语言 */
+.form-check-input { border-color: #cbd5e1; }
+.form-check-input:focus {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, .10);
+}
+
+/* 标题竖条点缀（Light Tech 签名细节）：给页面主标题左侧加 4px 蓝→青渐变竖条，
+   带轻微发光，作为层级锚点。用法：<h1 class="... hw-title-accent">。
+   ::before 不属于文本节点，脚本用 text() 改写标题（如"编辑作业"）不受影响。 */
+.hw-title-accent::before {
+    content: "";
+    display: inline-block;
+    width: 4px; height: 1.05em;
+    border-radius: 2px;
+    background: linear-gradient(180deg, #2563eb 0%, #22d3ee 100%);
+    box-shadow: 0 0 6px rgba(37, 99, 235, .45), 0 0 10px rgba(34, 211, 238, .25);
+    margin-right: .6rem;
+    vertical-align: -.16em;
+}
+
+/* 模态框 / 抽屉 / 下拉 / 列表组 / 提示气泡：统一大圆角 + 玻璃面 + 柔阴影 */
+.modal-content {
+    background-color: var(--hw-glass-bg-strong);
+    backdrop-filter: var(--hw-blur); -webkit-backdrop-filter: var(--hw-blur);
+    border: 1px solid var(--hw-glass-border);
+    border-radius: var(--bs-border-radius-lg);
+    box-shadow: var(--hw-shadow-lg);
+}
+.offcanvas {
+    background-color: var(--hw-glass-bg-strong);
+    backdrop-filter: var(--hw-blur); -webkit-backdrop-filter: var(--hw-blur);
+    border: 1px solid var(--hw-glass-border);
+    box-shadow: var(--hw-shadow-lg);
+}
+.toast {
+    background-color: var(--hw-glass-bg-strong);
+    backdrop-filter: var(--hw-blur); -webkit-backdrop-filter: var(--hw-blur);
+    border: 1px solid var(--hw-glass-border);
+    border-radius: .7rem;
+    box-shadow: var(--hw-shadow-md);
+}
+.list-group { --bs-list-group-border-color: rgba(37, 99, 235, .08); }
+.list-group-item { border-radius: .5rem; }
+.alert { border-radius: .6rem; border-width: 0; box-shadow: var(--hw-shadow-sm); }
+.dropdown-menu {
+    background-color: var(--hw-glass-bg-strong);
+    backdrop-filter: var(--hw-blur); -webkit-backdrop-filter: var(--hw-blur);
+    border-radius: .6rem;
+    border: 1px solid var(--hw-glass-border);
+    box-shadow: var(--hw-shadow-md);
+}
+
+/* =====================================================================
+ * 六、导航栏（layout 片段）：深空蓝渐变 + 品牌标识 + 胶囊菜单 + 角色徽章
+ *    结构由 fragments/layout.html 提供（含 data-bs-theme="dark"，让 Bootstrap
+ *    5.3 的折叠按钮图标自动切换为白色），这里只负责外观。
+ * ===================================================================== */
+.hw-navbar {
+    background: var(--hw-brand-grad);
+    border-bottom: 1px solid rgba(34, 211, 238, .18);
+    box-shadow: 0 2px 14px rgba(15, 23, 42, .25), 0 1px 0 rgba(34, 211, 238, .12);
+    padding: .55rem 0;
+}
+/* 品牌区：标识方块 + 系统名 */
+.hw-brand { display: flex; align-items: center; gap: .6rem; color: #fff !important; font-weight: 700; }
+.hw-brand-mark {
+    width: 34px; height: 34px; border-radius: .6rem;
+    background: var(--hw-tech-grad);
+    display: inline-flex; align-items: center; justify-content: center;
+    box-shadow: 0 2px 10px rgba(37, 99, 235, .45), 0 1px 4px rgba(34, 211, 238, .3);
+    flex: 0 0 auto;
+}
+.hw-brand-text { font-size: 1.02rem; line-height: 1.2; }
+.hw-brand-sub { display: block; font-size: .68rem; font-weight: 400; color: rgba(255, 255, 255, .55); letter-spacing: .04em; }
+
+/* 菜单项：胶囊化，当前项高亮（active 由 th:classappend 注入） */
+.hw-navbar .nav-link {
+    color: rgba(255, 255, 255, .72);
+    border-radius: .5rem;
+    padding: .4rem .8rem;
+    font-weight: 500;
+    transition: background .15s ease, color .15s ease;
+}
+.hw-navbar .nav-link:hover { color: #fff; background: rgba(255, 255, 255, .08); }
+.hw-navbar .nav-link.active {
+    color: #fff;
+    background: linear-gradient(135deg, rgba(37, 99, 235, .35) 0%, rgba(34, 211, 238, .18) 100%);
+    box-shadow: inset 0 0 0 1px rgba(34, 211, 238, .35);
+}
+
+/* 用户区：角色徽章 + 登录名 + 登出按钮 */
+.hw-user { display: flex; align-items: center; gap: .5rem; }
+.hw-role-chip {
+    display: inline-flex; align-items: center; gap: .35rem;
+    background: rgba(255, 255, 255, .1);
+    border: 1px solid rgba(255, 255, 255, .14);
+    color: #e2e8f0; border-radius: .5rem;
+    padding: .3rem .6rem; font-size: .78rem; font-weight: 500;
+}
+.hw-role-chip .hw-role-dot {
+    width: 7px; height: 7px; border-radius: 50%; background: #f59e0b;
+    box-shadow: 0 0 6px rgba(245, 158, 11, .6);
+}
+.hw-logout-btn {
+    border: 1px solid rgba(255, 255, 255, .2);
+    color: #e2e8f0; border-radius: .5rem; font-size: .8rem;
+    background: transparent;
+    transition: background .15s ease, color .15s ease;
+}
+.hw-logout-btn:hover { background: rgba(255, 255, 255, .12); color: #fff; }
+
+/* =====================================================================
+ * 七、页脚（layout 片段）：弱化、与页面底融合
+ * ===================================================================== */
+.hw-footer {
+    border-top: 1px solid rgba(37, 99, 235, .10);
+    background: transparent;
+    padding: 1rem 0;
+    color: #94a3b8;
+    font-size: .78rem;
+}
+
+/* =====================================================================
+ * 八、登录页（split hero）：左侧品牌面板 + 右侧玻璃表单卡
+ *    结构由 login.html 提供，这里负责两栏布局与品牌面渲染。
+ * ===================================================================== */
+.hw-login-wrap {
+    position: relative;
+    min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    padding: 2rem 1rem;
+    background:
+        radial-gradient(1200px 600px at 15% 10%, rgba(37, 99, 235, .14), transparent 60%),
+        radial-gradient(900px 500px at 90% 90%, rgba(6, 182, 212, .10), transparent 55%),
+        linear-gradient(160deg, #eef3fb 0%, #f3f6fc 100%);
+}
+/* 登录页同样铺 30px 科技网格（在卡片之下，玻璃壳会透出模糊网格） */
+.hw-login-wrap::before {
+    content: "";
+    position: absolute; inset: 0;
+    background-image:
+        linear-gradient(to right, var(--hw-grid-line) 1px, transparent 1px),
+        linear-gradient(to bottom, var(--hw-grid-line) 1px, transparent 1px);
+    background-size: 30px 30px;
+    pointer-events: none;
+}
+.hw-login-shell {
+    position: relative; z-index: 1;
+    width: 100%; max-width: 920px;
+    display: grid; grid-template-columns: 1.1fr 1fr;
+    background-color: var(--hw-glass-bg-strong);
+    backdrop-filter: var(--hw-blur); -webkit-backdrop-filter: var(--hw-blur);
+    border-radius: 1.1rem;
+    border: 1px solid var(--hw-glass-border);
+    outline: 1px solid var(--hw-glass-edge);
+    box-shadow: var(--hw-shadow-lg);
+    overflow: hidden;
+}
+/* 左侧品牌面板：深空渐变 + 卖点列表 */
+.hw-login-hero {
+    background: var(--hw-brand-grad);
+    color: #fff;
+    padding: 2.4rem 2rem;
+    display: flex; flex-direction: column; justify-content: center;
+    position: relative; overflow: hidden;
+}
+.hw-login-hero::after {
+    content: ""; position: absolute; inset: auto -40px -40px auto;
+    width: 220px; height: 220px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(34, 211, 238, .3), transparent 70%);
+}
+.hw-login-hero h2 { font-size: 1.35rem; font-weight: 700; margin-bottom: .4rem; }
+.hw-login-hero .hw-hero-sub { color: rgba(255, 255, 255, .6); font-size: .85rem; margin-bottom: 1.6rem; }
+.hw-hero-points { list-style: none; padding: 0; margin: 0; display: grid; gap: .85rem; }
+.hw-hero-points li { display: flex; gap: .6rem; align-items: flex-start; font-size: .88rem; color: rgba(255, 255, 255, .85); }
+.hw-hero-points .hw-hero-ico {
+    width: 22px; height: 22px; border-radius: .4rem; flex: 0 0 auto;
+    background: rgba(255, 255, 255, .12);
+    display: inline-flex; align-items: center; justify-content: center;
+    color: #22d3ee;
+}
+/* 右侧表单区 */
+.hw-login-form { padding: 2.4rem 2rem; }
+.hw-login-form .hw-form-title { font-size: 1.25rem; font-weight: 700; color: #1e293b; }
+.hw-login-form .hw-form-sub { color: #64748b; font-size: .85rem; margin-bottom: 1.4rem; }
+.hw-login-btn {
+    background-image: var(--hw-tech-grad);
+    border: 0; color: #fff; font-weight: 600;
+    border-radius: .5rem; padding: .6rem 1rem;
+    box-shadow: 0 2px 10px rgba(37, 99, 235, .35), 0 1px 4px rgba(6, 182, 212, .2);
+    transition: box-shadow .15s ease, transform .15s ease;
+}
+.hw-login-btn:hover { box-shadow: var(--hw-glow-blue); transform: translateY(-2px); }
+.hw-login-btn:disabled { opacity: .7; transform: none; box-shadow: none; }
+/* 登录错误提示：柔和红色内联块 */
+.hw-login-error {
+    background: rgba(254, 242, 242, .9); border: 1px solid #fecaca; color: #b91c1c;
+    border-radius: .5rem; padding: .5rem .75rem; font-size: .82rem;
+}
+/* 窄屏：隐藏左品牌面，单列表单 */
+@media (max-width: 768px) {
+    .hw-login-shell { grid-template-columns: 1fr; max-width: 420px; }
+    .hw-login-hero { display: none; }
+}
+
+/* =====================================================================
+ * 九、正文预览 / 空状态 / 图表容器（保留原有功能语义，仅美化外观）
+ * ===================================================================== */
+/* 长文本正文预览（批改抽屉/复核弹窗）：限高滚动，避免撑爆页面 */
+.hw-content-preview {
+    max-height: 320px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    background-color: rgba(248, 250, 252, .7);
+    border: 1px solid rgba(37, 99, 235, .10);
+    border-radius: .6rem;
+    padding: .85rem 1rem;
+    font-size: .875rem;
+    line-height: 1.6;
+    color: #334155;
+}
+
+/* 空状态提示块：居中弱化 */
+.hw-empty {
+    padding: 2.5rem 1rem;
+    text-align: center;
+    color: #94a3b8;
+    font-size: .9rem;
+}
+
+/* 图表容器：固定高度保证 ECharts 渲染稳定（宽度自适应栅格）。
+   背景透明，让玻璃卡面与网格成为图表底，整体更清透（配合 api.js chartBase）。 */
+.hw-chart { width: 100%; height: 340px; background: transparent; }
+.hw-chart-tall { height: 420px; }
+
+/* 小屏适配：表格容器横向滚动，避免窄屏挤压列宽 */
+@media (max-width: 768px) {
+    .hw-table-wrap { overflow-x: auto; }
+    .hw-brand-sub { display: none; }
+}
+
+/* 滚动条细化（webkit）：与浅色主题协调 */
+.hw-content-preview::-webkit-scrollbar, .hw-table-wrap::-webkit-scrollbar { width: 8px; height: 8px; }
+.hw-content-preview::-webkit-scrollbar-thumb, .hw-table-wrap::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, .6); border-radius: 8px;
+}
+
+/* =====================================================================
+ * 十、渐进增强兜底：旧浏览器不支持 backdrop-filter 时退回不透明浅面，
+ *     保证可读性与功能完整（仅外观降级，无需 JS）。
+ * ===================================================================== */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .card, .hw-stat { background-image: linear-gradient(160deg, #fbfdff 0%, #f4f8fd 100%); }
+    .modal-content, .offcanvas, .toast, .dropdown-menu, .hw-login-shell {
+        background-color: #ffffff;
+    }
+}
+
+/* 尊重系统"减少动态效果"偏好：关闭位移类微交互 */
+@media (prefers-reduced-motion: reduce) {
+    .btn-primary, .btn-soft, .hw-card-hover, .hw-login-btn {
+        transition: none;
+    }
+    .btn-primary:hover, .btn-soft:hover, .hw-card-hover:hover, .hw-login-btn:hover {
+        transform: none;
+    }
+}

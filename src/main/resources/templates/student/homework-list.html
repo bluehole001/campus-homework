@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<!--
+  学生端·我的作业列表（Batch 5 视图层，仅 ROLE_STUDENT）。
+  数据一律经 jQuery 调用 /api/student/homework/page（Service 层按登录态
+  clazzId 限定本班作业，前端无法伪造）；右侧附班级公告栏（/api/common/notice，
+  班级ID取自 /api/auth/me 的登录态出参）。布局与脚本复用 fragments/layout。
+
+  「浅色科技风 Light Tech」对齐说明（只改视觉层，Thymeleaf 片段引用与后端契约零改动）：
+  页面底色（冰蓝 #f3f6fc + 30px 科技网格）、玻璃拟态卡片、蓝青渐变按钮、分页、
+  表单控件等全站语言已全部由 app.css 统一提供；本页 <style> 仅保留页面专属增强
+  （软色状态徽章、公告条目、更透气的表格内边距、标题链接、搜索按钮），
+  此前与全站冲突的局部规则（白卡、页面底色、按钮、分页、表头配色）已删除。
+-->
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('我的作业')}"></head>
+<body>
+<!-- 公共导航栏（active 标识当前菜单项；菜单本身由 sec:authorize 按角色渲染） -->
+<nav th:replace="~{fragments/layout :: navbar('student-homework')}"></nav>
+
+<!-- ==================== 页面级样式（仅保留本页专属增强，其余继承全站 Light Tech） ==================== -->
+<style>
+    /* 卡片头/主体内边距加厚：内容离边缘更远（呼吸感）；配色继承全站玻璃语言 */
+    .card-header h1 { font-size: 1.05rem; font-weight: 700; color: #1f2937; letter-spacing: -.01em; }
+    .card-body { padding: 1.25rem 1.5rem; }
+
+    /* 表格：加大单元格内边距（数据更透气）；表头/悬停/发丝线配色继承全站 */
+    .table thead th { padding: .85rem 1rem; }
+    .table tbody td { padding: .9rem 1rem; }
+
+    /* 作业标题：主链接样式，悬停变品牌蓝 */
+    .hw-title-link { font-weight: 600; color: #1f2937; text-decoration: none; }
+    .hw-title-link:hover { color: #2563eb; }
+
+    /* 搜索按钮：玻璃白底描边（次要操作语言），悬停描边变品牌蓝 */
+    .btn-search {
+        background: rgba(255, 255, 255, .8); border: 1px solid rgba(37, 99, 235, .22); color: #374151;
+        border-radius: 8px; font-weight: 500;
+        transition: border-color .15s ease, color .15s ease, box-shadow .15s ease;
+    }
+    .btn-search:hover {
+        border-color: #2563eb; color: #2563eb; background: rgba(255, 255, 255, .9);
+        box-shadow: 0 2px 6px rgba(37, 99, 235, .12);
+    }
+
+    /* ---------- 状态徽章：低饱和底色 + 深色文字（本页专属，Ant Design tag 风格） ---------- */
+    .hw-badge-soft {
+        display: inline-flex; align-items: center; gap: .35rem;
+        border-radius: 6px; padding: .32em .7em;
+        font-size: .75rem; font-weight: 600; letter-spacing: .01em;
+        line-height: 1.45;
+    }
+    /* 小圆点前缀：状态语义一眼可辨，比纯色块更克制 */
+    .hw-badge-soft::before {
+        content: ""; width: 6px; height: 6px; border-radius: 50%;
+        background: currentColor; opacity: .55;
+    }
+    .hw-badge-soft-success { background: #e6f7ee; color: #15803d; }  /* 成绩已发布 */
+    .hw-badge-soft-neutral { background: #eef1f5; color: #4b5563; }  /* 成绩未发布 / 知识点 */
+    .hw-badge-soft-danger  { background: #feeceb; color: #b42318; }  /* 公告置顶 */
+    /* 已截止时间：深红文字（比 Bootstrap 的 #dc3545 更沉稳） */
+    .hw-deadline-expired { color: #b42318; font-weight: 500; }
+
+    /* ---------- 公告栏：条目化 + 悬停浅底（侧栏卡片，分隔线带一丝蓝调） ---------- */
+    .hw-notice-item {
+        padding: .8rem .9rem;
+        border-bottom: 1px solid rgba(37, 99, 235, .07);
+        border-radius: 8px;
+        transition: background-color .15s ease;
+    }
+    .hw-notice-item:hover { background-color: rgba(59, 130, 246, .07); }
+    .hw-notice-item:last-child { border-bottom: 0; }
+    .hw-notice-title { font-size: .85rem; font-weight: 600; color: #1f2937; line-height: 1.45; }
+    .hw-notice-meta { font-size: .75rem; color: #8a919c; margin-top: .3rem; }
+
+    /* ---------- 空状态：更柔的弱化提示 ---------- */
+    .hw-empty {
+        padding: 3rem 1rem;
+        text-align: center;
+        color: #9aa1ad;
+        font-size: .9rem;
+    }
+</style>
+
+<main class="hw-main">
+    <div class="container py-4">
+        <!-- 列间距 g-5（3rem）：左右两栏之间留出足够呼吸空间 -->
+        <div class="row g-5">
+            <!-- ==================== 左栏：作业列表 ==================== -->
+            <div class="col-lg-9">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h1 class="mb-0">我的作业</h1>
+                        <!-- 关键字检索：模糊匹配作业标题（后端 100% #{} 预编译） -->
+                        <form class="d-flex gap-2" id="search-form" role="search">
+                            <input class="form-control form-control-sm" id="keyword"
+                                   placeholder="搜索作业标题" maxlength="100" style="width: 220px">
+                            <button class="btn btn-sm btn-search" type="submit">搜索</button>
+                        </form>
+                    </div>
+                    <div class="card-body">
+                        <div class="hw-table-wrap">
+                            <table class="table table-hover mb-0">
+                                <thead>
+                                <tr>
+                                    <th>作业标题</th>
+                                    <th>知识点</th>
+                                    <th>截止时间</th>
+                                    <th>满分</th>
+                                    <th>成绩状态</th>
+                                    <th class="text-end">操作</th>
+                                </tr>
+                                </thead>
+                                <!-- 表体由脚本渲染（数据来自 /api/student/homework/page） -->
+                                <tbody id="hw-tbody"></tbody>
+                            </table>
+                        </div>
+                        <!-- 空状态提示（无作业时显示） -->
+                        <div class="hw-empty d-none" id="empty-tip">
+                            暂无作业——班级还没有发布任何作业。
+                        </div>
+                        <!-- 分页条（api.js renderPager 渲染） -->
+                        <div class="d-flex justify-content-end mt-4" id="pager"></div>
+                    </div>
+                </div>
+            </div>
+            <!-- ==================== 右栏：班级公告栏（只读，置顶在前） ==================== -->
+            <div class="col-lg-3">
+                <div class="card">
+                    <div class="card-header">
+                        <h2 class="h6 mb-0">班级公告</h2>
+                    </div>
+                    <div class="card-body p-2" id="notice-list">
+                        <div class="text-muted small p-2">加载中…</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer th:replace="~{fragments/layout :: footer}"></footer>
+<th:block th:replace="~{fragments/layout :: scripts(false)}"></th:block>
+<script>
+    // 当前页码与关键字（列表状态由脚本持有，翻页/搜索都走同一加载函数）
+    var state = { pageNum: 1, keyword: '' };
+
+    $(function () {
+        loadList(1);
+        loadNotices();
+
+        $('#search-form').on('submit', function (e) {
+            e.preventDefault();
+            state.keyword = $.trim($('#keyword').val());
+            loadList(1);
+        });
+    });
+
+    /**
+     * 加载作业分页：GET /api/student/homework/page（Service 层限定本班）。
+     * @param pageNum 目标页码
+     */
+    function loadList(pageNum) {
+        state.pageNum = pageNum;
+        HW.get('/api/student/homework/page', {
+            pageNum: pageNum, pageSize: 10, keyword: state.keyword || null
+        }).done(function (page) {
+            renderRows(page.records || []);
+            HW.renderPager($('#pager'), page, loadList);
+        });
+    }
+
+    /** 渲染作业行：标题/知识点/截止/满分/成绩状态/入口（徽章为低饱和软色风格） */
+    function renderRows(rows) {
+        var $tbody = $('#hw-tbody').empty();
+        $('#empty-tip').toggleClass('d-none', rows.length > 0);
+        $.each(rows, function (i, hw) {
+            // 成绩发布状态徽章（isScorePublished 为派生字段，0未发布/1已发布）：
+            // 浅绿底深绿字 / 浅灰底深灰字，替代原来的白字实底徽章
+            var pub = hw.isScorePublished === 1
+                ? '<span class="hw-badge-soft hw-badge-soft-success">成绩已发布</span>'
+                : '<span class="hw-badge-soft hw-badge-soft-neutral">成绩未发布</span>';
+            var tr = '<tr>' +
+                '<td><a class="hw-title-link" href="/student/homework/' + HW.esc(hw.id) + '">' +
+                HW.esc(hw.title) + '</a></td>' +
+                '<td><span class="hw-badge-soft hw-badge-soft-neutral">' + HW.dash(hw.knowledgeTag) + '</span></td>' +
+                '<td>' + deadlineCell(hw.deadline) + '</td>' +
+                '<td>' + HW.esc(hw.totalScore) + '</td>' +
+                '<td>' + pub + '</td>' +
+                '<td class="text-end"><a class="btn btn-sm btn-primary" href="/student/homework/' +
+                HW.esc(hw.id) + '">查看/提交</a></td>' +
+                '</tr>';
+            $tbody.append(tr);
+        });
+    }
+
+    /** 截止时间单元格：已过期的深红弱化，未过期的正常展示 */
+    function deadlineCell(deadline) {
+        if (!deadline) { return HW.dash(deadline); }
+        var d = new Date(String(deadline).replace(' ', 'T'));
+        if (!isNaN(d.getTime()) && d.getTime() < Date.now()) {
+            return '<span class="hw-deadline-expired">' + HW.esc(deadline) +
+                ' <span class="small">（已截止）</span></span>';
+        }
+        return HW.fmtDateTime(deadline);
+    }
+
+    /**
+     * 加载班级公告栏：先取本人登录态（/api/auth/me 回 clazzId），
+     * 再按该班级调 /api/common/notice/clazz/{clazzId}（Service 层限本班）。
+     */
+    function loadNotices() {
+        HW.whoAmI().done(function (me) {
+            if (!me || !me.clazzId) {
+                $('#notice-list').html('<div class="text-muted small p-2">无法确定班级</div>');
+                return;
+            }
+            HW.get('/api/common/notice/clazz/' + me.clazzId).done(function (list) {
+                var $box = $('#notice-list').empty();
+                if (!list || list.length === 0) {
+                    $box.html('<div class="text-muted small p-2">暂无公告</div>');
+                    return;
+                }
+                // 只展示前 5 条（完整列表在"班级公告"页），置顶徽标区分
+                $.each(list.slice(0, 5), function (i, n) {
+                    var top = n.isTop === 1
+                        ? '<span class="hw-badge-soft hw-badge-soft-danger">置顶</span> ' : '';
+                    $box.append(
+                        '<div class="hw-notice-item">' +
+                        '<div class="hw-notice-title">' + top + HW.esc(n.title) + '</div>' +
+                        '<div class="hw-notice-meta">' + HW.esc(n.publisherName) + ' · ' + HW.fmtDateTime(n.createTime) + '</div>' +
+                        '</div>');
+                });
+            });
+        });
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<!--
+  公共布局片段（Batch 5 视图层基础设施 · 界面美化版）：
+  所有页面通过 th:replace / th:insert 引用本文件的 head / navbar / footer / scripts 片段，
+  保证导航、样式、脚本与登出逻辑全站唯一来源（视图层死锁铁律：Thymeleaf + Bootstrap5 + jQuery + ECharts5）。
+  角色菜单一律用 sec:authorize（thymeleaf-extras-springsecurity5）按服务端会话渲染，
+  前端无法伪造；页面数据仍由 jQuery 调 /api/** 获取，布局本身不访问数据库。
+  本地化前端库位于 static/vendor（Bootstrap 5.3.3 / jQuery 3.7.1 / ECharts 5.5.0）。
+
+  本次美化仅调整外观结构（品牌标识、角色徽章、胶囊菜单、页脚弱化），
+  片段名称/参数与鉴权逻辑完全不变，13 个页面无需逐页改动；
+  全部视觉规则集中在 static/css/app.css（品牌色令牌 + Bootstrap 变量重映射）。
+-->
+<html xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
+
+<!-- ==================== 公共 head：meta + 本地 Bootstrap CSS + 应用样式 ==================== -->
+<head th:fragment="head(title)">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title th:text="${title} + ' · 班级学业管理与作业提交系统'">班级学业管理与作业提交系统</title>
+    <!-- 本地化 Bootstrap 5（static/vendor，离线可用；Spring Boot 将 classpath:/static/ 映射到根路径，SecurityConfig 已放行 /vendor/**） -->
+    <link rel="stylesheet" th:href="@{/vendor/bootstrap.min.css}">
+    <!-- 应用自定义样式（品牌设计令牌 + 组件精修，浅色主题） -->
+    <link rel="stylesheet" th:href="@{/css/app.css}">
+</head>
+
+<body>
+<!-- ==================== 公共导航栏：品牌 + 按角色菜单 + 用户信息 + 登出 ==================== -->
+<!-- 外观由 app.css 的 .hw-navbar 提供（深海军蓝渐变 + 胶囊菜单）；navbar-dark 仅用于移动端折叠按钮配色 -->
+<nav th:fragment="navbar(active)" class="navbar hw-navbar navbar-expand-lg navbar-dark"
+     sec:authorize="isAuthenticated()">
+    <div class="container px-4">
+        <!-- 品牌：标识方块（内联 SVG，无外部图标库）+ 系统名；按角色首页由 PageController 的 / 自动分流 -->
+        <a class="navbar-brand hw-brand" th:href="@{/}">
+            <span class="hw-brand-mark" aria-hidden="true">
+                <!-- 学士帽图标：纯矢量，随品牌渐变底显示 -->
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+                     stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 10 12 5 2 10l10 5 10-5z"/>
+                    <path d="M6 12v5c0 1.7 2.7 3 6 3s6-1.3 6-3v-5"/>
+                </svg>
+            </span>
+            <span class="hw-brand-text">
+                班级学业管理
+                <span class="hw-brand-sub">作业提交 · 查重 · 成绩分析</span>
+            </span>
+        </a>
+        <button class="navbar-toggler border-0" type="button" data-bs-toggle="collapse" data-bs-target="#hwNav"
+                aria-controls="hwNav" aria-expanded="false" aria-label="展开导航">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="hwNav">
+            <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+                <!-- 学生端菜单：仅 ROLE_STUDENT 渲染（服务端会话判定，前端不可伪造） -->
+                <li class="nav-item" sec:authorize="hasRole('STUDENT')">
+                    <a class="nav-link" th:classappend="${active == 'student-homework'} ? 'active'"
+                       th:href="@{/student/homework}">我的作业</a>
+                </li>
+                <li class="nav-item" sec:authorize="hasRole('STUDENT')">
+                    <a class="nav-link" th:classappend="${active == 'student-notice'} ? 'active'"
+                       th:href="@{/student/notice}">班级公告</a>
+                </li>
+                <!-- 教师端菜单：仅 ROLE_TEACHER 渲染 -->
+                <li class="nav-item" sec:authorize="hasRole('TEACHER')">
+                    <a class="nav-link" th:classappend="${active == 'teacher-homework'} ? 'active'"
+                       th:href="@{/teacher/homework}">作业管理</a>
+                </li>
+                <li class="nav-item" sec:authorize="hasRole('TEACHER')">
+                    <a class="nav-link" th:classappend="${active == 'teacher-homework-new'} ? 'active'"
+                       th:href="@{/teacher/homework/new}">发布作业</a>
+                </li>
+                <li class="nav-item" sec:authorize="hasRole('TEACHER')">
+                    <a class="nav-link" th:classappend="${active == 'teacher-dashboard'} ? 'active'"
+                       th:href="@{/teacher/dashboard}">教学看板</a>
+                </li>
+                <li class="nav-item" sec:authorize="hasRole('TEACHER')">
+                    <a class="nav-link" th:classappend="${active == 'teacher-notice'} ? 'active'"
+                       th:href="@{/teacher/notice}">公告管理</a>
+                </li>
+                <!-- 管理端菜单：仅 ROLE_ADMIN 渲染 -->
+                <li class="nav-item" sec:authorize="hasRole('ADMIN')">
+                    <a class="nav-link" th:classappend="${active == 'admin-clazz'} ? 'active'"
+                       th:href="@{/admin/clazz}">班级管理</a>
+                </li>
+                <li class="nav-item" sec:authorize="hasRole('ADMIN')">
+                    <a class="nav-link" th:classappend="${active == 'admin-user'} ? 'active'"
+                       th:href="@{/admin/user}">账号管理</a>
+                </li>
+                <li class="nav-item" sec:authorize="hasRole('ADMIN')">
+                    <a class="nav-link" th:classappend="${active == 'admin-dashboard'} ? 'active'"
+                       th:href="@{/admin/dashboard}">数据看板</a>
+                </li>
+            </ul>
+            <!-- 用户区：角色徽章 + 登录名来自服务端认证主体（sec:authentication），登出走 POST /api/auth/logout -->
+            <div class="hw-user">
+                <span class="hw-role-chip">
+                    <span class="hw-role-dot" aria-hidden="true"></span>
+                    <span sec:authorize="hasRole('STUDENT')">学生</span>
+                    <span sec:authorize="hasRole('TEACHER')">教师</span>
+                    <span sec:authorize="hasRole('ADMIN')">管理员</span>
+                    <span sec:authentication="name"></span>
+                </span>
+                <button class="hw-logout-btn" type="button" id="hw-logout-btn">退出登录</button>
+            </div>
+        </div>
+    </div>
+</nav>
+
+<!-- ==================== 公共页脚（弱化样式，与页面底色融合） ==================== -->
+<footer th:fragment="footer" class="hw-footer mt-auto">
+    <div class="container text-center">
+        班级学业管理与作业提交系统 · Spring Boot 2.7 + Thymeleaf + Bootstrap 5 + jQuery + ECharts 5
+    </div>
+</footer>
+
+<!-- ==================== 公共脚本：本地 jQuery/Bootstrap/ECharts + api.js + 全站公共逻辑 ==================== -->
+<!-- withCharts=true 的页面（教师看板/成绩分析/管理端看板）额外加载 ECharts -->
+<th:block th:fragment="scripts(withCharts)">
+    <!-- 本地化 jQuery 3.7.1（所有 AJAX 与 DOM 操作的基础；classpath:/static/ 映射到根路径） -->
+    <script th:src="@{/vendor/jquery.min.js}"></script>
+    <!-- 本地化 Bootstrap 5 bundle（含 Toast/Dropdown 组件，api.js 的 toast 依赖） -->
+    <script th:src="@{/vendor/bootstrap.bundle.min.js}"></script>
+    <!-- ECharts 5（仅看板/图表页加载，列表页不引入以节省带宽） -->
+    <script th:if="${withCharts}" th:src="@{/vendor/echarts.min.js}"></script>
+    <!-- 统一 API 封装（Result 契约处理 / toast / 分页 / 徽章 / 图表公共配置） -->
+    <script th:src="@{/js/api.js}"></script>
+    <!-- 全站公共脚本：登出按钮绑定（布局内唯一交互，其余逻辑在各页面脚本块中） -->
+    <script>
+        $(function () {
+            // 登出：POST /api/auth/logout（框架 LogoutFilter 仅接受 POST），完成后回登录页
+            $('#hw-logout-btn').on('click', function () { HW.logout(); });
+        });
+    </script>
+</th:block>
+</body>
+</html>

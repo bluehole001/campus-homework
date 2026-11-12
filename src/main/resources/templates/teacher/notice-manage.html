@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<!--
+  教师端·公告管理页（Batch 5 视图层，仅 ROLE_TEACHER）。
+  左栏为发布/编辑表单（POST /api/teacher/notice，NoticeSaveDTO：
+  id 为空=发布新公告、非空=编辑；编辑仅限本人，Service 层 IDOR 校验），
+  右栏为公告列表：先取班级下拉（GET /api/common/clazz/options，教师仅返回
+  本人授课班级），再按选中班级调 GET /api/common/notice/clazz/{clazzId}
+  展示（置顶在前），每行提供编辑回填与删除（DELETE /api/teacher/notice/{id}）。
+  本页不加载 ECharts（scripts(false)）。
+-->
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('公告管理')}"></head>
+<body>
+<nav th:replace="~{fragments/layout :: navbar('teacher-notice')}"></nav>
+
+<main class="hw-main">
+    <div class="container py-4">
+        <div class="row g-4">
+            <!-- ==================== 左栏：发布/编辑公告表单 ==================== -->
+            <div class="col-lg-5">
+                <div class="card">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <h1 class="h6 mb-0" id="form-title">发布公告</h1>
+                        <button class="btn btn-sm btn-link text-muted d-none" id="cancel-edit-btn"
+                                type="button">取消编辑</button>
+                    </div>
+                    <div class="card-body">
+                        <form id="notice-form" autocomplete="off">
+                            <!-- 编辑模式隐藏回填的公告ID（空=发布新公告） -->
+                            <input type="hidden" id="n-id">
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold" for="n-clazz">目标班级</label>
+                                <select class="form-select form-select-sm" id="n-clazz" required>
+                                    <!-- 由脚本填充（仅限本人授课班级） -->
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold" for="n-title">公告标题</label>
+                                <input class="form-control form-control-sm" id="n-title" maxlength="128"
+                                       required placeholder="如：本周作业提交时间调整">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold" for="n-content">公告正文</label>
+                                <textarea class="form-control form-control-sm" id="n-content" rows="6"
+                                          required placeholder="公告内容，学生端按发布时间倒序查看，置顶公告优先展示"></textarea>
+                            </div>
+                            <div class="form-check form-switch mb-3">
+                                <input class="form-check-input" type="checkbox" id="n-top">
+                                <label class="form-check-label small" for="n-top">置顶显示</label>
+                            </div>
+                            <button class="btn btn-primary btn-sm w-100" type="submit" id="save-btn">发布公告</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ==================== 右栏：公告列表（按班级查看） ==================== -->
+            <div class="col-lg-7">
+                <div class="card">
+                    <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <h2 class="h6 mb-0">公告列表</h2>
+                        <div class="d-flex align-items-center gap-2">
+                            <label class="small text-muted mb-0" for="view-clazz">查看班级</label>
+                            <select class="form-select form-select-sm w-auto" id="view-clazz"></select>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="notice-list"></div>
+                        <div class="hw-empty d-none" id="empty-tip">该班级还没有公告，在左侧表单发布第一条。</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer th:replace="~{fragments/layout :: footer}"></footer>
+<th:block th:replace="~{fragments/layout :: scripts(false)}"></th:block>
+<script>
+    // 当前查看的班级ID（与表单班级下拉相互独立，便于"看A班、发B班"）
+    var viewClazzId = null;
+
+    $(function () {
+        loadClazzOptions();
+        $('#view-clazz').on('change', function () {
+            viewClazzId = $(this).val() || null;
+            loadNotices();
+        });
+        $('#notice-form').on('submit', submitNotice);
+        $('#cancel-edit-btn').on('click', resetForm);
+        // 编辑/删除按钮事件委托（列表动态渲染）
+        $('#notice-list').on('click', '[data-edit]', function () {
+            fillForm($(this).data('edit'));
+        }).on('click', '[data-del]', function () {
+            var id = $(this).data('del');
+            var title = $(this).data('title');
+            if (!window.confirm('确认删除公告「' + title + '」？删除后学生端立即不可见，且不可恢复。')) {
+                return;
+            }
+            HW.del('/api/teacher/notice/' + id).done(function () {
+                HW.toast('公告已删除', 'success');
+                loadNotices();
+            });
+        });
+    });
+
+    /** 班级下拉：两个 select 共用同一份数据（教师仅返回本人授课班级） */
+    function loadClazzOptions() {
+        HW.get('/api/common/clazz/options').done(function (list) {
+            var opts = '';
+            $.each(list || [], function (i, c) {
+                opts += '<option value="' + HW.esc(c.id) + '">' +
+                    HW.esc(c.clazzName) + '（' + HW.esc(c.clazzCode) + '）</option>';
+            });
+            if (!list || list.length === 0) {
+                opts = '<option value="">（暂无授课班级）</option>';
+            }
+            $('#n-clazz, #view-clazz').html(opts);
+            if (list && list.length > 0) {
+                viewClazzId = String($('#view-clazz').val());
+                loadNotices();
+            }
+        });
+    }
+
+    /** 公告列表：GET /api/common/notice/clazz/{clazzId}（Service 层限定授课班级，置顶在前） */
+    function loadNotices() {
+        if (!viewClazzId) {
+            $('#notice-list').empty();
+            $('#empty-tip').removeClass('d-none');
+            return;
+        }
+        HW.get('/api/common/notice/clazz/' + viewClazzId).done(function (rows) {
+            renderNotices(rows || []);
+        });
+    }
+
+    /** 渲染公告卡片列表：置顶徽章 + 发布人 + 编辑（仅限本人，后端兜底）/删除入口 */
+    function renderNotices(rows) {
+        var $wrap = $('#notice-list').empty();
+        $('#empty-tip').toggleClass('d-none', rows.length > 0);
+        $.each(rows, function (i, n) {
+            var topBadge = n.isTop === 1
+                ? '<span class="badge bg-danger">置顶</span> ' : '';
+            $wrap.append(
+                '<div class="card mb-3"><div class="card-body">' +
+                '<div class="d-flex justify-content-between align-items-start gap-2">' +
+                '<div class="flex-grow-1">' +
+                '<h3 class="h6 mb-1">' + topBadge + HW.esc(n.title) + '</h3>' +
+                '<div class="small text-muted mb-2">' + HW.dash(n.publisherName) + ' · ' +
+                HW.fmtDateTime(n.createTime) + '</div>' +
+                '<div class="hw-content-preview mb-2">' + HW.esc(n.content) + '</div>' +
+                '</div>' +
+                '<div class="text-nowrap">' +
+                '<button class="btn btn-sm btn-outline-secondary mb-1 d-block" data-edit="' + HW.esc(n.id) +
+                '">编辑</button>' +
+                '<button class="btn btn-sm btn-outline-danger" data-del="' + HW.esc(n.id) +
+                '" data-title="' + HW.esc(n.title) + '">删除</button>' +
+                '</div></div></div></div>');
+        });
+    }
+
+    /**
+     * 编辑回填：公告没有独立的 GET 详情端点，列表接口已含全部字段，
+     * 因此重新拉取当前班级列表并按 id 精确匹配回填（不依赖 DOM 反解析）。
+     */
+    function fillForm(id) {
+        var target = null;
+        HW.get('/api/common/notice/clazz/' + viewClazzId).done(function (rows) {
+            $.each(rows || [], function (i, n) {
+                if (String(n.id) === String(id)) { target = n; return false; }
+            });
+            if (!target) {
+                HW.toast('未找到该公告，可能已被删除', 'warning');
+                loadNotices();
+                return;
+            }
+            $('#n-id').val(target.id);
+            $('#n-clazz').val(target.clazzId);
+            $('#n-title').val(target.title);
+            $('#n-content').val(target.content);
+            $('#n-top').prop('checked', target.isTop === 1);
+            $('#form-title').text('编辑公告');
+            $('#save-btn').text('保存修改');
+            $('#cancel-edit-btn').removeClass('d-none');
+            // 滚动到表单，提示用户当前处于编辑态
+            $('html, body').animate({ scrollTop: $('#notice-form').offset().top - 80 }, 200);
+        });
+    }
+
+    /** 表单提交：POST /api/teacher/notice（id 空=新发布、非空=编辑本人公告） */
+    function submitNotice(e) {
+        e.preventDefault();
+        var body = {
+            id: $('#n-id').val() ? Number($('#n-id').val()) : null,
+            clazzId: Number($('#n-clazz').val()),
+            title: $.trim($('#n-title').val()),
+            content: $.trim($('#n-content').val()),
+            isTop: $('#n-top').is(':checked') ? 1 : 0
+        };
+        if (!body.clazzId) {
+            HW.toast('请选择目标班级', 'warning');
+            return;
+        }
+        HW.postJson('/api/teacher/notice', body).done(function () {
+            HW.toast(body.id ? '公告已更新' : '公告已发布', 'success');
+            resetForm();
+            // 若编辑改变了班级，切换查看下拉到该班级以便确认结果
+            if (body.clazzId !== viewClazzId) {
+                $('#view-clazz').val(body.clazzId);
+                viewClazzId = String(body.clazzId);
+            }
+            loadNotices();
+        });
+    }
+
+    /** 复位表单到"发布新公告"状态 */
+    function resetForm() {
+        $('#notice-form')[0].reset();
+        $('#n-id').val('');
+        $('#form-title').text('发布公告');
+        $('#save-btn').text('发布公告');
+        $('#cancel-edit-btn').addClass('d-none');
+    }
+</script>
+</body>
+</html>

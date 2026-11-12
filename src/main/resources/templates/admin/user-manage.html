@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<!--
+  管理端·账号管理页（Batch 5 视图层，仅 ROLE_ADMIN）。
+  功能：师生账号 CRUD、重置密码、启用/禁用、CSV 批量导入学生。
+  接口契约（全部 /api/admin/**，Service 层含"仅管理员"与唯一性/业务规则校验）：
+  - 列表   GET  /api/admin/user/page        PageQueryDTO -> PageVO<UserVO>（不含密码）
+  - 保存   POST /api/admin/user             UserSaveDTO（id 空=新增；密码留空：
+           新增默认 123456、修改表示不变更；学生必须选班级，教师/管理员忽略）
+  - 删除   DELETE /api/admin/user/{id}      禁止删除当前管理员自己
+  - 重置   PUT  /api/admin/user/{id}/password   重置为初始密码 123456
+  - 启停   PUT  /api/admin/user/{id}/status     1/0 切换（禁用账号登录被框架拦截）
+  - 导入   POST /api/admin/user/import      multipart file 字段；整批事务：
+           任一行失败则整批回滚，ImportResultVO.errors 逐行给出原因
+  班级下拉来自 GET /api/common/clazz/options（管理员返回全部班级）。
+-->
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('账号管理')}"></head>
+<body>
+<nav th:replace="~{fragments/layout :: navbar('admin-user')}"></nav>
+
+<main class="hw-main">
+    <div class="container py-4">
+        <div class="row g-4">
+            <!-- ==================== 左栏：新增/修改账号表单 ==================== -->
+            <div class="col-lg-4">
+                <div class="card">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <h1 class="h6 mb-0" id="form-title">新增账号</h1>
+                        <button class="btn btn-sm btn-link text-muted d-none" id="cancel-edit-btn"
+                                type="button">取消编辑</button>
+                    </div>
+                    <div class="card-body">
+                        <form id="user-form" autocomplete="off">
+                            <!-- 编辑模式隐藏回填的用户ID（空=新增） -->
+                            <input type="hidden" id="u-id">
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold" for="u-role">角色</label>
+                                <select class="form-select form-select-sm" id="u-role" required>
+                                    <option value="ROLE_STUDENT" selected>学生</option>
+                                    <option value="ROLE_TEACHER">教师</option>
+                                    <option value="ROLE_ADMIN">管理员</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold" for="u-clazz">所属班级（学生必选）</label>
+                                <select class="form-select form-select-sm" id="u-clazz">
+                                    <!-- 由脚本填充（管理员可见全部班级） -->
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold" for="u-no">学号/工号</label>
+                                <input class="form-control form-control-sm" id="u-no" required
+                                       pattern="[A-Za-z0-9]{2,32}" maxlength="32" placeholder="如 2023010101">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold" for="u-username">登录用户名</label>
+                                <input class="form-control form-control-sm" id="u-username" required
+                                       pattern="[A-Za-z0-9_]{3,32}" maxlength="32" placeholder="字母数字下划线 3-32 位">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold" for="u-name">真实姓名</label>
+                                <input class="form-control form-control-sm" id="u-name" required maxlength="32">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold" for="u-email">邮箱（催交/成绩通知收件地址）</label>
+                                <input class="form-control form-control-sm" id="u-email" required type="email">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold" for="u-password">密码</label>
+                                <input class="form-control form-control-sm" id="u-password" type="password"
+                                       minlength="6" maxlength="32" placeholder="留空：新增默认 123456 / 修改不变更">
+                            </div>
+                            <div class="form-check form-switch mb-3">
+                                <input class="form-check-input" type="checkbox" id="u-status" checked>
+                                <label class="form-check-label small" for="u-status">账号启用</label>
+                            </div>
+                            <button class="btn btn-primary btn-sm w-100" type="submit" id="save-btn">新增账号</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ==================== 右栏：账号列表 + CSV 批量导入 ==================== -->
+            <div class="col-lg-8">
+                <!-- CSV 导入面板：整批事务，失败时逐行展示原因 -->
+                <div class="card mb-3">
+                    <div class="card-header bg-white">
+                        <h2 class="h6 mb-0">CSV 批量导入学生</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="small text-muted mb-2">
+                            CSV 需为 UTF-8 编码、首行表头，列顺序：<code>user_no,username,real_name,email,clazz_id</code>
+                            （第 5 列为班级数字ID，可在"班级管理"页查看；字段内不允许出现逗号）；
+                            导入的学生统一为 ROLE_STUDENT、初始密码 123456，单次上限 1000 行。
+                            <strong>整批事务</strong>：任一行校验失败则整批一条也不入库，请修正后重新上传整个文件。
+                        </div>
+                        <div class="d-flex flex-wrap align-items-center gap-2">
+                            <input class="form-control form-control-sm w-auto" type="file" id="csv-file" accept=".csv,text/csv">
+                            <button class="btn btn-sm btn-primary" id="import-btn" type="button">上传导入</button>
+                        </div>
+                        <!-- 导入结果：成功绿色汇总、失败红色逐行原因 -->
+                        <div class="mt-3 d-none" id="import-result"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <h2 class="h6 mb-0">账号列表</h2>
+                        <form class="d-flex gap-2" id="search-form" role="search">
+                            <input class="form-control form-control-sm" id="keyword"
+                                   placeholder="搜索学号/用户名/姓名" maxlength="100">
+                            <button class="btn btn-sm btn-outline-primary" type="submit">搜索</button>
+                        </form>
+                    </div>
+                    <div class="card-body">
+                        <div class="hw-table-wrap">
+                            <table class="table table-hover align-middle mb-0">
+                                <thead>
+                                <tr>
+                                    <th>学号/工号</th>
+                                    <th>用户名</th>
+                                    <th>姓名</th>
+                                    <th>角色</th>
+                                    <th>班级</th>
+                                    <th>邮箱</th>
+                                    <th>状态</th>
+                                    <th class="text-end">操作</th>
+                                </tr>
+                                </thead>
+                                <!-- 表体由脚本渲染（数据来自 /api/admin/user/page） -->
+                                <tbody id="user-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div class="hw-empty d-none" id="empty-tip">没有符合条件的账号。</div>
+                        <div class="d-flex justify-content-end mt-3" id="pager"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer th:replace="~{fragments/layout :: footer}"></footer>
+<th:block th:replace="~{fragments/layout :: scripts(false)}"></th:block>
+<script>
+    var state = { pageNum: 1, keyword: '' };
+    // 当前页原始行缓存：编辑回填直接按 id 命中，避免再调详情接口
+    var cachedRows = [];
+
+    $(function () {
+        loadClazzOptions();
+        loadList(1);
+        // 角色切换时联动班级必填提示（学生必选班级，与 Service 层校验口径一致）
+        $('#u-role').on('change', function () {
+            var isStudent = $(this).val() === 'ROLE_STUDENT';
+            $('#u-clazz').prop('required', isStudent);
+            if (!isStudent) {
+                $('#u-clazz').prop('selectedIndex', 0);
+            }
+        });
+        $('#search-form').on('submit', function (e) {
+            e.preventDefault();
+            state.keyword = $.trim($('#keyword').val());
+            loadList(1);
+        });
+        $('#user-form').on('submit', submitUser);
+        $('#cancel-edit-btn').on('click', resetForm);
+        $('#import-btn').on('click', doImport);
+        // 行内操作按钮事件委托（表体动态渲染）
+        $('#user-tbody')
+            .on('click', '[data-edit]', function () { fillForm($(this).data('edit')); })
+            .on('click', '[data-del]', function () {
+                var id = $(this).data('del');
+                var name = $(this).data('name');
+                if (!window.confirm('确认删除账号「' + name + '」？删除后该账号立即无法登录，且不可恢复。')) {
+                    return;
+                }
+                HW.del('/api/admin/user/' + id).done(function () {
+                    HW.toast('账号已删除', 'success');
+                    loadList(state.pageNum);
+                });
+            })
+            .on('click', '[data-reset]', function () {
+                var id = $(this).data('reset');
+                var name = $(this).data('name');
+                if (!window.confirm('确认将「' + name + '」的密码重置为初始密码 123456？')) {
+                    return;
+                }
+                HW.putJson('/api/admin/user/' + id + '/password', {}).done(function () {
+                    HW.toast('密码已重置为 123456', 'success');
+                });
+            })
+            .on('click', '[data-toggle]', function () {
+                var id = $(this).data('toggle');
+                HW.putJson('/api/admin/user/' + id + '/status', {}).done(function () {
+                    HW.toast('账号状态已切换', 'success');
+                    loadList(state.pageNum);
+                });
+            });
+    });
+
+    /** 班级下拉：GET /api/common/clazz/options（管理员返回全部班级） */
+    function loadClazzOptions() {
+        HW.get('/api/common/clazz/options').done(function (list) {
+            var opts = '<option value="">（不指定班级）</option>';
+            $.each(list || [], function (i, c) {
+                opts += '<option value="' + HW.esc(c.id) + '">' +
+                    HW.esc(c.clazzName) + '（' + HW.esc(c.clazzCode) + '）</option>';
+            });
+            $('#u-clazz').html(opts);
+        });
+    }
+
+    /** 账号分页：GET /api/admin/user/page（出参 UserVO 不含密码密文） */
+    function loadList(pageNum) {
+        state.pageNum = pageNum;
+        HW.get('/api/admin/user/page', {
+            pageNum: pageNum, pageSize: 10, keyword: state.keyword || null
+        }).done(function (page) {
+            cachedRows = page.records || [];
+            renderRows(cachedRows);
+            HW.renderPager($('#pager'), page, loadList);
+        });
+    }
+
+    /** 角色徽章（中文标签 + 配色）与状态徽章（启用绿/禁用红） */
+    function roleBadge(role) {
+        var map = {
+            ROLE_STUDENT: ['学生', 'bg-primary'],
+            ROLE_TEACHER: ['教师', 'bg-info text-dark'],
+            ROLE_ADMIN: ['管理员', 'bg-dark']
+        };
+        var item = map[role] || [role || '未知', 'bg-secondary'];
+        return '<span class="badge ' + item[1] + '">' + item[0] + '</span>';
+    }
+
+    /** 渲染账号行：操作列含 编辑/重置密码/启停用/删除 四个入口 */
+    function renderRows(rows) {
+        var $tbody = $('#user-tbody').empty();
+        $('#empty-tip').toggleClass('d-none', rows.length > 0);
+        $.each(rows, function (i, u) {
+            var id = HW.esc(u.id);
+            var statusBadge = u.status === 1
+                ? '<span class="badge bg-success">启用</span>'
+                : '<span class="badge bg-danger">禁用</span>';
+            var actions =
+                '<button class="btn btn-sm btn-outline-secondary" data-edit="' + id + '">编辑</button> ' +
+                '<button class="btn btn-sm btn-outline-warning" data-reset="' + id +
+                '" data-name="' + HW.esc(u.realName) + '">重置密码</button> ' +
+                '<button class="btn btn-sm btn-outline-' + (u.status === 1 ? 'secondary' : 'success') +
+                '" data-toggle="' + id + '">' + (u.status === 1 ? '停用' : '启用') + '</button> ' +
+                '<button class="btn btn-sm btn-outline-danger" data-del="' + id +
+                '" data-name="' + HW.esc(u.realName) + '">删除</button>';
+            $tbody.append('<tr>' +
+                '<td>' + HW.esc(u.userNo) + '</td>' +
+                '<td class="fw-semibold">' + HW.esc(u.username) + '</td>' +
+                '<td>' + HW.esc(u.realName) + '</td>' +
+                '<td>' + roleBadge(u.role) + '</td>' +
+                '<td>' + HW.dash(u.clazzName) + '</td>' +
+                '<td class="small">' + HW.dash(u.email) + '</td>' +
+                '<td>' + statusBadge + '</td>' +
+                '<td class="text-end text-nowrap">' + actions + '</td>' +
+                '</tr>');
+        });
+    }
+
+    /** 编辑回填：命中当前页缓存行；密码留空表示不变更 */
+    function fillForm(id) {
+        var target = null;
+        $.each(cachedRows, function (i, u) {
+            if (String(u.id) === String(id)) { target = u; return false; }
+        });
+        if (!target) {
+            HW.toast('未找到该账号，请刷新后重试', 'warning');
+            return;
+        }
+        $('#u-id').val(target.id);
+        $('#u-role').val(target.role);
+        // 先触发角色联动（学生必填班级），再回填班级值
+        $('#u-role').trigger('change');
+        if (target.clazzId) {
+            $('#u-clazz').val(String(target.clazzId));
+        }
+        $('#u-no').val(target.userNo);
+        $('#u-username').val(target.username);
+        $('#u-name').val(target.realName);
+        $('#u-email').val(target.email);
+        $('#u-password').val('');
+        $('#u-status').prop('checked', target.status === 1);
+        $('#form-title').text('修改账号');
+        $('#save-btn').text('保存修改');
+        $('#cancel-edit-btn').removeClass('d-none');
+        $('html, body').animate({ scrollTop: $('#user-form').offset().top - 80 }, 200);
+    }
+
+    /** 表单提交：POST /api/admin/user（密码留空时不提交该字段，避免触发 6 位最小长度校验） */
+    function submitUser(e) {
+        e.preventDefault();
+        var body = {
+            id: $('#u-id').val() ? Number($('#u-id').val()) : null,
+            userNo: $.trim($('#u-no').val()),
+            username: $.trim($('#u-username').val()),
+            realName: $.trim($('#u-name').val()),
+            email: $.trim($('#u-email').val()),
+            role: $('#u-role').val(),
+            clazzId: $('#u-clazz').val() ? Number($('#u-clazz').val()) : null,
+            status: $('#u-status').is(':checked') ? 1 : 0
+        };
+        var pwd = $('#u-password').val();
+        if (pwd) { body.password = pwd; }
+        if (body.role === 'ROLE_STUDENT' && !body.clazzId) {
+            HW.toast('学生账号必须选择班级', 'warning');
+            return;
+        }
+        HW.postJson('/api/admin/user', body).done(function () {
+            HW.toast(body.id ? '账号已更新' : '账号已新增（初始密码 ' + (pwd ? '已设置' : '123456') + '）', 'success');
+            resetForm();
+            loadList(state.pageNum);
+        });
+    }
+
+    /** 复位表单到"新增账号"状态 */
+    function resetForm() {
+        $('#user-form')[0].reset();
+        $('#u-id').val('');
+        $('#u-role').val('ROLE_STUDENT').trigger('change');
+        $('#u-status').prop('checked', true);
+        $('#form-title').text('新增账号');
+        $('#save-btn').text('新增账号');
+        $('#cancel-edit-btn').addClass('d-none');
+    }
+
+    /**
+     * CSV 导入：POST /api/admin/user/import（multipart，表单字段名 file）。
+     * 整批事务语义：failCount>0 时整批回滚，逐行展示 errors；
+     * 全部成功时展示绿色汇总并刷新列表。
+     */
+    function doImport() {
+        var input = document.getElementById('csv-file');
+        if (!input.files || !input.files[0]) {
+            HW.toast('请先选择 CSV 文件', 'warning');
+            return;
+        }
+        var fd = new FormData();
+        fd.append('file', input.files[0]);
+        $('#import-btn').prop('disabled', true).text('导入中…');
+        HW.upload('/api/admin/user/import', fd).done(function (r) {
+            renderImportResult(r);
+            if (r.failCount === 0 && r.successCount > 0) {
+                loadList(1);
+            }
+        }).always(function () {
+            $('#import-btn').prop('disabled', false).text('上传导入');
+        });
+    }
+
+    /** 导入结果块：成功绿色、失败红色并逐行列出错误原因 */
+    function renderImportResult(r) {
+        var $box = $('#import-result').empty().removeClass('d-none');
+        var ok = r.failCount === 0;
+        var head = '<div class="alert ' + (ok ? 'alert-success' : 'alert-danger') + ' py-2 mb-2">' +
+            '共 ' + HW.esc(r.total) + ' 行：成功 ' + HW.esc(r.successCount) + ' 行，失败 ' + HW.esc(r.failCount) + ' 行' +
+            (ok ? '，已全部入库。' : '，整批已回滚——一条也未入库，请修正后重新上传整个文件。') +
+            '</div>';
+        var bodyHtml = '';
+        if (!ok && r.errors && r.errors.length > 0) {
+            bodyHtml = '<div class="hw-content-preview"><ul class="mb-0 ps-3">' +
+                $.map(r.errors, function (e) { return '<li class="small">' + HW.esc(e) + '</li>'; }).join('') +
+                '</ul></div>';
+        }
+        $box.html(head + bodyHtml);
+    }
+</script>
+</body>
+</html>

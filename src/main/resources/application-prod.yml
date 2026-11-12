@@ -1,0 +1,79 @@
+# =====================================================================
+# 生产环境（prod）：Linux 服务器部署配置
+# 启动方式：java -jar campus-homework.jar --spring.profiles.active=prod
+# 敏感项（数据库/Redis/MQ/邮件密码）通过环境变量注入，避免明文入库
+# =====================================================================
+server:
+  port: 8080
+  servlet:
+    context-path: /
+  tomcat:
+    # 生产线程数与连接数，支撑查分高峰并发
+    threads:
+      max: 200
+      min-spare: 20
+    max-connections: 8192
+    accept-count: 200
+
+spring:
+  # Thymeleaf 生产强缓存，提升渲染吞吐
+  thymeleaf:
+    cache: true
+
+  # 生产数据源：连接参数来自环境变量（DEPLOY_DB_HOST 等）
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${DEPLOY_DB_HOST:127.0.0.1}:${DEPLOY_DB_PORT:3306}/campus_homework?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=true
+    username: ${DEPLOY_DB_USER:root}
+    password: ${DEPLOY_DB_PASSWORD:changeme}
+    hikari:
+      # 生产连接池：查分高峰需要更大池
+      minimum-idle: 10
+      maximum-pool-size: 50
+      connection-timeout: 10000
+
+  # 生产 Redis：独立实例，密码由环境变量注入
+  data:
+    redis:
+      host: ${DEPLOY_REDIS_HOST:127.0.0.1}
+      port: ${DEPLOY_REDIS_PORT:6379}
+      password: ${DEPLOY_REDIS_PASSWORD:}
+      database: 0
+      timeout: 5000ms
+      lettuce:
+        pool:
+          max-active: 64
+          max-idle: 32
+          min-idle: 8
+
+  # 生产 RabbitMQ：密码由环境变量注入
+  rabbitmq:
+    host: ${DEPLOY_MQ_HOST:127.0.0.1}
+    port: ${DEPLOY_MQ_PORT:5672}
+    username: ${DEPLOY_MQ_USER:homework}
+    password: ${DEPLOY_MQ_PASSWORD:changeme}
+    virtual-host: /homework
+
+  # 生产邮件：真实 SMTP（QQ 企业邮箱示例），授权码由环境变量注入
+  mail:
+    host: ${DEPLOY_MAIL_HOST:smtp.qq.com}
+    port: ${DEPLOY_MAIL_PORT:465}
+    username: ${DEPLOY_MAIL_USER:notice@campus.edu.cn}
+    password: ${DEPLOY_MAIL_PASSWORD:changeme}
+    default-encoding: UTF-8
+
+# 生产附件目录：Linux 固定挂载路径（部署文档中说明 Nginx 映射 /files/**）
+homework:
+  upload:
+    dir: /data/homework/upload
+  mail:
+    sender: ${DEPLOY_MAIL_USER:notice@campus.edu.cn}
+    enabled: true
+
+# 生产日志：仅 WARN 级别业务日志，SQL 不输出
+logging:
+  level:
+    root: warn
+    com.campus.homework: info
+  file:
+    name: /data/homework/logs/campus-homework.log

@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<!--
+  学生端·作业详情/提交页（Batch 5 视图层，仅 ROLE_STUDENT）。
+  作业ID由页面路由 /student/homework/{id} 的路径段提供，脚本用 HW.pathId()
+  提取后调用 GET /api/student/homework/{id}/mine（MyHomeworkDetailVO：
+  作业要求 + 本人提交与成绩段）。IDOR 关键：score/teacherComment/similarityRate
+  仅在成绩已发布时由 Service 层填充，未发布时前端拿到的就是 null，
+  学生看不到未发布的成绩——前端只做展示，不做"隐藏"判断兜底。
+  提交流程：附件先经 POST /api/file/upload（type=hw）落盘拿相对路径，
+  再连同正文 POST /api/student/submission；截止前重交覆盖旧记录。
+-->
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('作业详情')}"></head>
+<body>
+<nav th:replace="~{fragments/layout :: navbar('student-homework')}"></nav>
+
+<main class="hw-main">
+    <div class="container py-4">
+        <!-- 面包屑：返回列表页 -->
+        <nav aria-label="面包屑" class="mb-3">
+            <ol class="breadcrumb small mb-0">
+                <li class="breadcrumb-item"><a href="/student/homework">我的作业</a></li>
+                <li class="breadcrumb-item active" aria-current="page">作业详情</li>
+            </ol>
+        </nav>
+
+        <div class="row g-4">
+            <!-- ==================== 左栏：作业要求与提交 ==================== -->
+            <div class="col-lg-8">
+                <!-- 作业要求卡片 -->
+                <div class="card mb-4">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <h1 class="h5 mb-0" id="hw-title">加载中…</h1>
+                        <span id="status-badge"></span>
+                    </div>
+                    <div class="card-body">
+                        <dl class="row mb-0">
+                            <dt class="col-sm-3 text-muted">知识点标签</dt>
+                            <dd class="col-sm-9" id="hw-tag"></dd>
+                            <dt class="col-sm-3 text-muted">截止时间</dt>
+                            <dd class="col-sm-9" id="hw-deadline"></dd>
+                            <dt class="col-sm-3 text-muted">作业满分</dt>
+                            <dd class="col-sm-9" id="hw-total"></dd>
+                            <dt class="col-sm-3 text-muted">参考附件</dt>
+                            <dd class="col-sm-9" id="hw-ref"></dd>
+                        </dl>
+                        <hr>
+                            <h2 class="h6 mb-2">作业要求</h2>
+                        <!-- 要求正文：pre-wrap 保留换行（后端已做 XSS 转义由前端 esc 保证） -->
+                        <div class="hw-content-preview" id="hw-requirement"></div>
+                    </div>
+                </div>
+
+                <!-- 提交/重交卡片 -->
+                <div class="card">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <h2 class="h5 mb-0">提交作业</h2>
+                        <span class="small text-muted" id="submit-hint"></span>
+                    </div>
+                    <div class="card-body">
+                        <form id="submit-form">
+                            <div class="mb-3">
+                                <label class="form-label" for="content-text">作业正文</label>
+                                <textarea class="form-control" id="content-text" rows="10"
+                                          maxlength="20000" placeholder="在线作答（正文与附件至少其一）"></textarea>
+                                <div class="form-text">正文与附件至少其一；截止前重复提交视为覆盖重交。</div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label" for="hw-file">作业附件（可选）</label>
+                                <input class="form-control" id="hw-file" type="file"
+                                       accept=".doc,.docx,.xls,.xlsx,.pdf,.txt,.zip,.png,.jpg,.jpeg">
+                                <div class="form-text">支持 Word/Excel/PDF/TXT/压缩包/图片，单个不超过 50MB；
+                                    已上传的附件显示在下方，重新选择文件将覆盖它。</div>
+                                <!-- 当前已提交的附件回显（下载入口） -->
+                                <div class="mt-2" id="current-file"></div>
+                            </div>
+                            <button class="btn btn-primary" type="submit" id="submit-btn">提交作业</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ==================== 右栏：我的成绩（仅成绩发布后可见） ==================== -->
+            <div class="col-lg-4">
+                <div class="card">
+                    <div class="card-header bg-white">
+                        <h2 class="h6 mb-0">我的成绩</h2>
+                    </div>
+                    <div class="card-body" id="score-panel">
+                        <div class="text-muted small">成绩尚未发布，发布后将在此显示。</div>
+                    </div>
+                </div>
+                <!-- 提交记录信息（提交时间等，始终可见——自己的数据） -->
+                <div class="card mt-4">
+                    <div class="card-header bg-white">
+                        <h2 class="h6 mb-0">提交记录</h2>
+                    </div>
+                    <div class="card-body">
+                        <dl class="row mb-0 small">
+                            <dt class="col-4 text-muted">提交状态</dt>
+                            <dd class="col-8" id="my-status">—</dd>
+                            <dt class="col-4 text-muted">提交时间</dt>
+                            <dd class="col-8" id="my-time">—</dd>
+                        </dl>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer th:replace="~{fragments/layout :: footer}"></footer>
+<th:block th:replace="~{fragments/layout :: scripts(false)}"></th:block>
+<script>
+    // 作业ID：由页面路由 /student/homework/{id} 的路径数字段提取（后端已按 IDOR 校验）
+    var homeworkId = HW.pathId();
+    // 当前详情缓存（提交成功后刷新复用，判断重交可用性）
+    var detail = null;
+
+    $(function () {
+        if (!homeworkId) {
+            HW.toast('作业ID无效', 'danger');
+            window.location.href = '/student/homework';
+            return;
+        }
+        loadDetail();
+        $('#submit-form').on('submit', onSubmit);
+    });
+
+    /** 加载个人详情：GET /api/student/homework/{id}/mine */
+    function loadDetail() {
+        HW.get('/api/student/homework/' + homeworkId + '/mine').done(function (d) {
+            detail = d;
+            renderDetail(d);
+        });
+    }
+
+    /** 渲染详情：要求段始终可见；成绩段仅 isScorePublished=1 时展示 */
+    function renderDetail(d) {
+        $('#hw-title').text(d.title || '');
+        $('#hw-tag').html('<span class="badge bg-light text-dark border">' + HW.dash(d.knowledgeTag) + '</span>');
+        $('#hw-deadline').html(deadlineCell(d.deadline));
+        $('#hw-total').text(d.totalScore != null ? d.totalScore + ' 分' : '—');
+        $('#hw-ref').html(HW.fileLink(d.attachmentUrl, d.attachmentName));
+        $('#hw-requirement').text(d.requirement || '（无要求说明）');
+        // 状态徽章（0未交/1按时交/2逾期未交/3已批改）
+        $('#status-badge').html(HW.statusBadge(d.submitStatus));
+        $('#my-status').html(HW.statusBadge(d.submitStatus));
+        $('#my-time').html(HW.fmtDateTime(d.submitTime));
+        // 正文回显：自己的数据始终可编辑重交
+        $('#content-text').val(d.contentText || '');
+        $('#current-file').html(d.fileUrl
+            ? '<div class="small">已提交附件：' + HW.fileLink(d.fileUrl, d.fileName) + '</div>' : '');
+        // 提交按钮可用性：成绩已发布后禁止重交（与 Service 层拒绝口径一致）
+        var published = d.isScorePublished === 1;
+        $('#submit-btn').prop('disabled', published);
+        if (published) {
+            $('#submit-hint').text('成绩已发布，不可再重交');
+        } else {
+            var d2 = new Date(String(d.deadline).replace(' ', 'T'));
+            $('#submit-hint').text(!isNaN(d2.getTime()) && d2.getTime() < Date.now()
+                ? '已过截止时间，提交将标记为逾期补交' : '截止前可反复重交（覆盖旧提交）');
+        }
+        // 成绩段：未发布时后端返回 null，这里同样不展示（双保险，数据本身未下发）
+        if (published) {
+            renderScore(d);
+        } else {
+            $('#score-panel').html('<div class="text-muted small">成绩尚未发布，发布后将在此显示。</div>');
+        }
+    }
+
+    /** 成绩段渲染：得分进度条 + 评语 + 查重结论（均为已发布后 Service 层填充的值） */
+    function renderScore(d) {
+        var html = '<div class="mb-3">' + HW.scoreBar(d.score, d.totalScore) + '</div>';
+        if (d.isHighRepeat === 1) {
+            // 高重复预警：红色提示 + 相似度（后端已按阈值 0.85 判定）
+            var sim = d.similarityRate != null ? (Number(d.similarityRate) * 100).toFixed(1) + '%' : '';
+            html += '<div class="alert alert-danger py-2 small mb-3">查重预警：与同学作业相似度 ' +
+                HW.esc(sim) + '，如有疑问请向老师说明。</div>';
+        } else if (d.similarityRate != null) {
+            html += '<div class="small text-muted mb-3">查重检测相似度：' +
+                (Number(d.similarityRate) * 100).toFixed(1) + '%（未达预警阈值）</div>';
+        }
+        html += '<h3 class="h6 mb-2">教师评语</h3>';
+        html += '<div class="hw-content-preview">' + HW.dash(d.teacherComment) + '</div>';
+        $('#score-panel').html(html);
+    }
+
+    /** 截止时间单元格：已截止红色标注（与列表页口径一致） */
+    function deadlineCell(deadline) {
+        if (!deadline) { return HW.dash(deadline); }
+        var d = new Date(String(deadline).replace(' ', 'T'));
+        if (!isNaN(d.getTime()) && d.getTime() < Date.now()) {
+            return '<span class="text-danger">' + HW.esc(deadline) + ' <span class="small">（已截止）</span></span>';
+        }
+        return HW.fmtDateTime(deadline);
+    }
+
+    /**
+     * 提交流程：① 若选择了新文件，先 POST /api/file/upload（type=hw，按
+     * 作业/学生两级归档）拿到相对路径；② 正文+路径一起 POST
+     * /api/student/submission（Service 层校验正文与附件至少其一）。
+     */
+    function onSubmit(e) {
+        e.preventDefault();
+        if (!detail || detail.isScorePublished === 1) {
+            HW.toast('成绩已发布，无法重交', 'warning');
+            return;
+        }
+        var content = $('#content-text').val();
+        var file = $('#hw-file')[0].files[0];
+        if (!content || !content.trim()) {
+            if (!file && !detail.fileUrl) {
+                HW.toast('正文与附件至少其一', 'warning');
+                return;
+            }
+        }
+        $('#submit-btn').prop('disabled', true).text('提交中…');
+        // 第一步：新附件先落盘（未选文件则直接沿用已提交路径或空）
+        var uploadPromise = $.Deferred().resolve(null).promise();
+        if (file) {
+            var fd = new FormData();
+            fd.append('file', file);
+            fd.append('type', 'hw');
+            fd.append('homeworkId', homeworkId);
+            uploadPromise = HW.upload('/api/file/upload', fd);
+        }
+        uploadPromise.then(function (path) {
+            // path=null 时沿用旧附件（重交覆盖场景）；新上传成功则用新路径
+            var body = {
+                homeworkId: Number(homeworkId),
+                contentText: content || null,
+                fileUrl: path || (file ? null : (detail.fileUrl || null)),
+                fileName: file ? (file.name || null) : (path ? null : (detail.fileName || null))
+            };
+            return HW.postJson('/api/student/submission', body);
+        }).done(function () {
+            HW.toast('提交成功', 'success');
+            $('#hw-file').val('');
+            loadDetail(); // 重新拉取详情回显最新状态
+        }).always(function () {
+            $('#submit-btn').prop('disabled', detail && detail.isScorePublished === 1)
+                .text('提交作业');
+        });
+    }
+</script>
+</body>
+</html>

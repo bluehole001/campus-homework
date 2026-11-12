@@ -1,0 +1,67 @@
+# =====================================================================
+# 开发环境（dev）：本机 Windows 调试配置
+# 启动方式：默认即为 dev，直接运行 HomeworkApplication 即可
+# =====================================================================
+server:
+  port: 9090
+  servlet:
+    context-path: /
+
+spring:
+  # 本机 MySQL 8.0 数据源
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/campus_homework?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: 123456
+    hikari:
+      minimum-idle: 2
+      maximum-pool-size: 10
+      connection-timeout: 10000
+
+  # 本机 Redis
+  redis:
+    host: localhost
+    port: 6379
+    database: 0
+    timeout: 5000ms
+    lettuce:
+      pool:
+        max-active: 8
+        max-idle: 4
+        min-idle: 1
+
+  # 本机 RabbitMQ（重点修改区域）
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+    virtual-host: /
+    dynamic: false            # 👈 关键：禁止动态声明队列
+    listener:
+      simple:
+        auto-startup: false   # 👈 关键：禁止后台自动启动消费者
+        missing-queues-fatal: false
+
+  # 开发邮件
+  mail:
+    host: smtp.qq.com
+    port: 465
+    username: dev_sender@qq.com
+    password: dev_auth_code
+    default-encoding: UTF-8
+
+# 开发环境附件落盘目录
+homework:
+  upload:
+    dir: ./upload
+  mail:
+    sender: dev_sender@qq.com
+    enabled: false
+
+# 开发日志
+logging:
+  level:
+    com.campus.homework: debug
+    com.campus.homework.mapper: debug

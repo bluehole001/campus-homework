@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<!--
+  管理端·数据看板页（Batch 5 视图层，仅 ROLE_ADMIN，加载 ECharts）。
+  定位：教务管理员巡检各班的月度提交情况——与教师看板不同，这里走
+  /api/common/** 只读接口（管理员对全部班级可巡检，归属校验在 Service 层）：
+  - 班级下拉  GET /api/common/clazz/options（管理员返回全部班级）
+  - 趋势数据  GET /api/common/clazz/{clazzId}/trend?months=N（1-24）
+  图表为提交率/及格率/平均分三线折线（双 Y 轴），无成绩月份后端回 null，
+  ECharts 自动断线；趋势数据由每日定时任务生成，本页纯只读、不写任何数据。
+-->
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('数据看板')}"></head>
+<body>
+<nav th:replace="~{fragments/layout :: navbar('admin-dashboard')}"></nav>
+
+<main class="hw-main">
+    <div class="container py-4">
+        <!-- ==================== 筛选条：班级 + 统计月数 ==================== -->
+        <div class="card mb-3">
+            <div class="card-body d-flex flex-wrap align-items-center gap-3">
+                <label class="form-label mb-0 small fw-semibold" for="clazz-select">班级</label>
+                <select class="form-select form-select-sm w-auto" id="clazz-select">
+                    <!-- 由脚本填充（管理员可见全部班级） -->
+                </select>
+                <label class="form-label mb-0 small fw-semibold" for="months-select">统计月数</label>
+                <select class="form-select form-select-sm w-auto" id="months-select">
+                    <option value="6" selected>最近 6 个月</option>
+                    <option value="12">最近 12 个月</option>
+                    <option value="24">最近 24 个月</option>
+                </select>
+                <button class="btn btn-sm btn-primary" id="refresh-btn" type="button">刷新看板</button>
+                <span class="small text-muted ms-auto">
+                    数据由每日定时任务按班级生成并缓存，本页仅供巡检，不做任何写操作。
+                </span>
+            </div>
+        </div>
+
+        <div class="row g-4">
+            <!-- ==================== 左栏：月度提交趋势折线（双 Y 轴） ==================== -->
+            <div class="col-lg-8">
+                <div class="card">
+                    <div class="card-header bg-white">
+                        <h1 class="h6 mb-0">月度提交趋势（提交率 / 及格率 / 平均分）</h1>
+                    </div>
+                    <div class="card-body">
+                        <div class="hw-chart hw-chart-tall" id="trend-chart"></div>
+                        <div class="hw-empty d-none" id="trend-empty">
+                            该班级暂无月度统计记录——新班级或从未布置作业的班级不会生成统计。
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ==================== 右栏：逐月明细表（与折线同源数据） ==================== -->
+            <div class="col-lg-4">
+                <div class="card">
+                    <div class="card-header bg-white">
+                        <h2 class="h6 mb-0">逐月明细</h2>
+                    </div>
+                    <div class="card-body">
+                        <div class="hw-table-wrap">
+                            <table class="table table-sm table-hover align-middle mb-0">
+                                <thead>
+                                <tr>
+                                    <th>月份</th>
+                                    <th>作业数</th>
+                                    <th>提交率</th>
+                                    <th>及格率</th>
+                                </tr>
+                                </thead>
+                                <tbody id="stat-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div class="hw-empty d-none" id="table-empty">暂无统计数据。</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer th:replace="~{fragments/layout :: footer}"></footer>
+<!-- 图表页：withCharts=true，加载本地 ECharts -->
+<th:block th:replace="~{fragments/layout :: scripts(true)}"></th:block>
+<script>
+    // 趋势图实例（窗口 resize 时重排）
+    var trendChart = null;
+    // 当前选中的班级ID（null 表示下拉尚未填充）
+    var currentClazzId = null;
+
+    $(function () {
+        loadClazzOptions();
+        $('#clazz-select').on('change', function () {
+            currentClazzId = $(this).val() || null;
+            loadTrend();
+        });
+        $('#months-select').on('change', loadTrend);
+        $('#refresh-btn').on('click', loadTrend);
+        $(window).on('resize', function () {
+            if (trendChart) { trendChart.resize(); }
+        });
+    });
+
+    /** 班级下拉：GET /api/common/clazz/options（管理员返回全部班级） */
+    function loadClazzOptions() {
+        HW.get('/api/common/clazz/options').done(function (list) {
+            var $sel = $('#clazz-select').empty();
+            if (!list || list.length === 0) {
+                $sel.append('<option value="">（暂无班级）</option>');
+                $('#trend-empty, #table-empty').removeClass('d-none');
+                return;
+            }
+            $.each(list, function (i, c) {
+                $sel.append('<option value="' + HW.esc(c.id) + '">' +
+                    HW.esc(c.clazzName) + '（' + HW.esc(c.clazzCode) + '）</option>');
+            });
+            // 默认选中第一个班级并立即出图
+            currentClazzId = String($sel.val());
+            loadTrend();
+        });
+    }
+
+    /** 趋势折线：GET /api/common/clazz/{clazzId}/trend?months=N（管理员不限班级） */
+    function loadTrend() {
+        if (!currentClazzId) { return; }
+        var months = $('#months-select').val() || '6';
+        HW.get('/api/common/clazz/' + currentClazzId + '/trend', { months: months })
+            .done(function (rows) {
+                rows = rows || [];
+                renderTrend(rows);
+                renderTable(rows);
+            });
+    }
+
+    /**
+     * 渲染趋势图：左轴百分比（提交率/及格率），右轴平均分。
+     * 后端对无成绩月份回 null，ECharts 遇 null 数据点自动断线，无需前端补数。
+     */
+    function renderTrend(rows) {
+        if (rows.length === 0) {
+            $('#trend-empty').removeClass('d-none');
+            if (trendChart) { trendChart.dispose(); trendChart = null; }
+            return;
+        }
+        $('#trend-empty').addClass('d-none');
+        var el = document.getElementById('trend-chart');
+        if (!trendChart) { trendChart = echarts.init(el); }
+        trendChart.setOption($.extend(HW.chartBase(), {
+            legend: { data: ['平均提交率(%)', '及格率(%)', '平均分'], top: 8, textStyle: { color: '#475569' } },
+            xAxis: { type: 'category', data: rows.map(function (r) { return r.statMonth; }), axisLine: { lineStyle: { color: 'rgba(37,99,235,.15)' } }, axisTick: { show: false }, axisLabel: { color: '#64748b' } },
+            yAxis: [
+                { type: 'value', name: '百分比(%)', max: 100, minInterval: 10, axisLine: { show: false }, splitLine: { lineStyle: { color: 'rgba(37,99,235,.08)', type: 'dashed' } }, axisLabel: { color: '#64748b' } },
+                { type: 'value', name: '平均分', splitLine: { show: false }, axisLine: { show: false }, axisLabel: { color: '#64748b' } }
+            ],
+            series: [
+                { name: '平均提交率(%)', type: 'line', smooth: true, connectNulls: false,
+                  data: rows.map(function (r) { return r.avgSubmitRate != null ? Number(r.avgSubmitRate) : null; }),
+                  lineStyle: { color: '#3b82f6', width: 2.5 }, itemStyle: { color: '#3b82f6' } },
+                { name: '及格率(%)', type: 'line', smooth: true, connectNulls: false,
+                  data: rows.map(function (r) { return r.passRate != null ? Number(r.passRate) : null; }),
+                  lineStyle: { color: '#16a34a', width: 2.5 }, itemStyle: { color: '#16a34a' } },
+                { name: '平均分', type: 'line', smooth: true, connectNulls: false, yAxisIndex: 1,
+                  data: rows.map(function (r) { return r.avgScore != null ? Number(r.avgScore) : null; }),
+                  lineStyle: { color: '#dc2626', width: 2.5 }, itemStyle: { color: '#dc2626' } }
+            ]
+        }));
+    }
+
+    /** 逐月明细表：与折线同源数据，及格率缺失（无成绩）显示"—" */
+    function renderTable(rows) {
+        var $tbody = $('#stat-tbody').empty();
+        $('#table-empty').toggleClass('d-none', rows.length > 0);
+        // 明细按月份倒序展示（最近在前），与折线的升序方向相反，便于巡检最新情况
+        rows.slice().reverse().forEach(function (r) {
+            var passCell = r.passRate != null
+                ? (Number(r.passRate) < 60
+                    ? '<span class="text-danger fw-semibold">' + Number(r.passRate).toFixed(1) + '%</span>'
+                    : '<span class="text-success fw-semibold">' + Number(r.passRate).toFixed(1) + '%</span>')
+                : '<span class="text-muted">—</span>';
+            $tbody.append('<tr>' +
+                '<td class="small">' + HW.esc(r.statMonth) + '</td>' +
+                '<td>' + HW.esc(r.totalHomeworkNum) + '</td>' +
+                '<td>' + (r.avgSubmitRate != null ? Number(r.avgSubmitRate).toFixed(1) + '%' : '—') + '</td>' +
+                '<td>' + passCell + '</td>' +
+                '</tr>');
+        });
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<!--
+  教师端·作业管理列表（Batch 5 视图层，仅 ROLE_TEACHER）。
+  数据来自 GET /api/teacher/homework/page（Service 层限定"本人发布的作业"，
+  含已交 x/y 统计口径）。每行提供：查看提交名单、成绩分析、编辑、删除入口。
+-->
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('作业管理')}"></head>
+<body>
+<nav th:replace="~{fragments/layout :: navbar('teacher-homework')}"></nav>
+
+<main class="hw-main">
+    <div class="container py-4">
+        <div class="card">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <h1 class="h5 mb-0">我发布的作业</h1>
+                <div class="d-flex gap-2">
+                    <form class="d-flex gap-2" id="search-form" role="search">
+                        <input class="form-control form-control-sm" id="keyword"
+                               placeholder="搜索作业标题" maxlength="100">
+                        <button class="btn btn-sm btn-outline-primary" type="submit">搜索</button>
+                    </form>
+                    <a class="btn btn-sm btn-primary" href="/teacher/homework/new">发布作业</a>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="hw-table-wrap">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead>
+                        <tr>
+                            <th>作业标题</th>
+                            <th>知识点</th>
+                            <th>截止时间</th>
+                            <th>提交情况</th>
+                            <th>成绩状态</th>
+                            <th class="text-end">操作</th>
+                        </tr>
+                        </thead>
+                        <!-- 表体由脚本渲染（数据来自 /api/teacher/homework/page） -->
+                        <tbody id="hw-tbody"></tbody>
+                    </table>
+                </div>
+                <div class="hw-empty d-none" id="empty-tip">还没有发布过作业，点击右上角"发布作业"开始。</div>
+                <div class="d-flex justify-content-end mt-3" id="pager"></div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer th:replace="~{fragments/layout :: footer}"></footer>
+<th:block th:replace="~{fragments/layout :: scripts(false)}"></th:block>
+<script>
+    var state = { pageNum: 1, keyword: '' };
+
+    $(function () {
+        loadList(1);
+        $('#search-form').on('submit', function (e) {
+            e.preventDefault();
+            state.keyword = $.trim($('#keyword').val());
+            loadList(1);
+        });
+    });
+
+    /** 加载本人作业分页：GET /api/teacher/homework/page */
+    function loadList(pageNum) {
+        state.pageNum = pageNum;
+        HW.get('/api/teacher/homework/page', {
+            pageNum: pageNum, pageSize: 10, keyword: state.keyword || null
+        }).done(function (page) {
+            renderRows(page.records || []);
+            HW.renderPager($('#pager'), page, loadList);
+        });
+    }
+
+    /** 渲染作业行：含"已交 x/y"、成绩发布状态与四个操作入口 */
+    function renderRows(rows) {
+        var $tbody = $('#hw-tbody').empty();
+        $('#empty-tip').toggleClass('d-none', rows.length > 0);
+        $.each(rows, function (i, hw) {
+            var pub = hw.isScorePublished === 1
+                ? '<span class="badge bg-success">已发布</span>'
+                : '<span class="badge bg-secondary">未发布</span>';
+            // 提交情况：submitCount / studentCount（Service 层实时统计口径）
+            var submitCell = '<span class="small">' + HW.esc(hw.submitCount) + ' / ' +
+                HW.esc(hw.studentCount) + '</span>';
+            var id = HW.esc(hw.id);
+            var actions =
+                '<a class="btn btn-sm btn-outline-primary" href="/teacher/homework/' + id + '/roster">名单/批改</a> ' +
+                '<a class="btn btn-sm btn-outline-info" href="/teacher/homework/' + id + '/analysis">成绩分析</a> ' +
+                '<a class="btn btn-sm btn-outline-secondary" href="/teacher/homework/new?edit=' + id + '">编辑</a> ' +
+                '<button class="btn btn-sm btn-outline-danger" data-del="' + id +
+                '" data-title="' + HW.esc(hw.title) + '">删除</button>';
+            $tbody.append('<tr>' +
+                '<td><a class="fw-semibold text-decoration-none" href="/teacher/homework/' + id + '/roster">' +
+                HW.esc(hw.title) + '</a></td>' +
+                '<td><span class="badge bg-light text-dark border">' + HW.dash(hw.knowledgeTag) + '</span></td>' +
+                '<td>' + HW.fmtDateTime(hw.deadline) + '</td>' +
+                '<td>' + submitCell + '</td>' +
+                '<td>' + pub + '</td>' +
+                '<td class="text-end text-nowrap">' + actions + '</td>' +
+                '</tr>');
+        });
+        // 删除按钮事件委托（表体动态渲染，用委托避免逐行绑定）
+        $tbody.off('click', '[data-del]').on('click', '[data-del]', function () {
+            var id = $(this).data('del');
+            var title = $(this).data('title');
+            if (!window.confirm('确认删除作业「' + title + '」？其全部提交记录也会一并删除，且不可恢复。')) {
+                return;
+            }
+            HW.del('/api/teacher/homework/' + id).done(function () {
+                HW.toast('已删除', 'success');
+                loadList(state.pageNum);
+            });
+        });
+    }
+</script>
+</body>
+</html>

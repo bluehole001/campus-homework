@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<!--
+  管理端·班级管理页（Batch 5 视图层，仅 ROLE_ADMIN，管理员首页）。
+  左栏为新增/修改表单（POST /api/admin/clazz，ClazzSaveDTO：id 为空=新增、
+  非空=修改；编号唯一性、"班内仍有学生或作业时禁止删除"等规则全部在
+  Service 层校验，页面只负责提交与展示错误 toast），
+  右栏为班级分页列表（GET /api/admin/clazz/page，keyword 模糊匹配编号/名称，
+  在册人数为实时统计口径）。编辑回填直接复用当前页缓存的列表行数据
+  （ClazzVO 已含表单全部字段，无需再调 GET /api/admin/clazz/{id}）。
+-->
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('班级管理')}"></head>
+<body>
+<nav th:replace="~{fragments/layout :: navbar('admin-clazz')}"></nav>
+
+<main class="hw-main">
+    <div class="container py-4">
+        <div class="row g-4">
+            <!-- ==================== 左栏：新增/修改班级表单 ==================== -->
+            <div class="col-lg-4">
+                <div class="card">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                        <h1 class="h6 mb-0" id="form-title">新增班级</h1>
+                        <button class="btn btn-sm btn-link text-muted d-none" id="cancel-edit-btn"
+                                type="button">取消编辑</button>
+                    </div>
+                    <div class="card-body">
+                        <form id="clazz-form" autocomplete="off">
+                            <!-- 编辑模式隐藏回填的班级ID（空=新增） -->
+                            <input type="hidden" id="c-id">
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold" for="c-code">班级编号</label>
+                                <input class="form-control form-control-sm" id="c-code" required
+                                       pattern="[A-Za-z0-9\-]{2,32}" maxlength="32"
+                                       placeholder="如 CS2023-01（字母数字与连字符）">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold" for="c-name">班级名称</label>
+                                <input class="form-control form-control-sm" id="c-name" required
+                                       maxlength="64" placeholder="如 计算机科学与技术2023级1班">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label small fw-semibold" for="c-dept">所属院系</label>
+                                <input class="form-control form-control-sm" id="c-dept" required
+                                       maxlength="64" placeholder="如 计算机学院">
+                            </div>
+                            <button class="btn btn-primary btn-sm w-100" type="submit" id="save-btn">新增班级</button>
+                        </form>
+                    </div>
+                </div>
+                <!-- 删除规则提示：与 Service 层删除校验口径一致，减少无效尝试 -->
+                <div class="card mt-3">
+                    <div class="card-body small text-muted">
+                        删除规则：班内仍有学生或作业时无法删除，请先转移/删除相关数据；
+                        在册人数由系统在保存班级时按实际学生数自动同步。
+                    </div>
+                </div>
+            </div>
+
+            <!-- ==================== 右栏：班级分页列表 ==================== -->
+            <div class="col-lg-8">
+                <div class="card">
+                    <div class="card-header bg-white d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <h2 class="h6 mb-0">班级列表</h2>
+                        <form class="d-flex gap-2" id="search-form" role="search">
+                            <input class="form-control form-control-sm" id="keyword"
+                                   placeholder="搜索编号/名称" maxlength="100">
+                            <button class="btn btn-sm btn-outline-primary" type="submit">搜索</button>
+                        </form>
+                    </div>
+                    <div class="card-body">
+                        <div class="hw-table-wrap">
+                            <table class="table table-hover align-middle mb-0">
+                                <thead>
+                                <tr>
+                                    <th>班级编号</th>
+                                    <th>班级名称</th>
+                                    <th>所属院系</th>
+                                    <th>在册人数</th>
+                                    <th>创建时间</th>
+                                    <th class="text-end">操作</th>
+                                </tr>
+                                </thead>
+                                <!-- 表体由脚本渲染（数据来自 /api/admin/clazz/page） -->
+                                <tbody id="clazz-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div class="hw-empty d-none" id="empty-tip">还没有班级，在左侧表单新增第一个班级。</div>
+                        <div class="d-flex justify-content-end mt-3" id="pager"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer th:replace="~{fragments/layout :: footer}"></footer>
+<th:block th:replace="~{fragments/layout :: scripts(false)}"></th:block>
+<script>
+    var state = { pageNum: 1, keyword: '' };
+    // 当前页的原始行数据缓存：编辑回填直接从这里按 id 取，避免重复请求详情接口
+    var cachedRows = [];
+
+    $(function () {
+        loadList(1);
+        $('#search-form').on('submit', function (e) {
+            e.preventDefault();
+            state.keyword = $.trim($('#keyword').val());
+            loadList(1);
+        });
+        $('#clazz-form').on('submit', submitClazz);
+        $('#cancel-edit-btn').on('click', resetForm);
+        // 编辑/删除按钮事件委托（表体动态渲染）
+        $('#clazz-tbody').on('click', '[data-edit]', function () {
+            fillForm($(this).data('edit'));
+        }).on('click', '[data-del]', function () {
+            var id = $(this).data('del');
+            var name = $(this).data('name');
+            if (!window.confirm('确认删除班级「' + name + '」？班内仍有学生或作业时会被拒绝。')) {
+                return;
+            }
+            HW.del('/api/admin/clazz/' + id).done(function () {
+                HW.toast('班级已删除', 'success');
+                loadList(state.pageNum);
+            });
+        });
+    });
+
+    /** 班级分页：GET /api/admin/clazz/page */
+    function loadList(pageNum) {
+        state.pageNum = pageNum;
+        HW.get('/api/admin/clazz/page', {
+            pageNum: pageNum, pageSize: 10, keyword: state.keyword || null
+        }).done(function (page) {
+            cachedRows = page.records || [];
+            renderRows(cachedRows);
+            HW.renderPager($('#pager'), page, loadList);
+        });
+    }
+
+    /** 渲染班级行：人数为实时统计口径，操作列含编辑/删除 */
+    function renderRows(rows) {
+        var $tbody = $('#clazz-tbody').empty();
+        $('#empty-tip').toggleClass('d-none', rows.length > 0);
+        $.each(rows, function (i, c) {
+            var id = HW.esc(c.id);
+            $tbody.append('<tr>' +
+                '<td class="fw-semibold">' + HW.esc(c.clazzCode) + '</td>' +
+                '<td>' + HW.esc(c.clazzName) + '</td>' +
+                '<td>' + HW.dash(c.department) + '</td>' +
+                '<td><span class="badge bg-light text-dark border">' + HW.esc(c.studentCount) + ' 人</span></td>' +
+                '<td>' + HW.fmtDateTime(c.createTime) + '</td>' +
+                '<td class="text-end text-nowrap">' +
+                '<button class="btn btn-sm btn-outline-secondary" data-edit="' + id + '">编辑</button> ' +
+                '<button class="btn btn-sm btn-outline-danger" data-del="' + id +
+                '" data-name="' + HW.esc(c.clazzName) + '">删除</button>' +
+                '</td></tr>');
+        });
+    }
+
+    /** 编辑回填：直接命中当前页缓存行（ClazzVO 含表单全部字段） */
+    function fillForm(id) {
+        var target = null;
+        $.each(cachedRows, function (i, c) {
+            if (String(c.id) === String(id)) { target = c; return false; }
+        });
+        if (!target) {
+            HW.toast('未找到该班级，请刷新后重试', 'warning');
+            return;
+        }
+        $('#c-id').val(target.id);
+        $('#c-code').val(target.clazzCode);
+        $('#c-name').val(target.clazzName);
+        $('#c-dept').val(target.department);
+        $('#form-title').text('修改班级');
+        $('#save-btn').text('保存修改');
+        $('#cancel-edit-btn').removeClass('d-none');
+        $('html, body').animate({ scrollTop: $('#clazz-form').offset().top - 80 }, 200);
+    }
+
+    /** 表单提交：POST /api/admin/clazz（id 空=新增、非空=修改） */
+    function submitClazz(e) {
+        e.preventDefault();
+        var body = {
+            id: $('#c-id').val() ? Number($('#c-id').val()) : null,
+            clazzCode: $.trim($('#c-code').val()),
+            clazzName: $.trim($('#c-name').val()),
+            department: $.trim($('#c-dept').val())
+        };
+        HW.postJson('/api/admin/clazz', body).done(function () {
+            HW.toast(body.id ? '班级已更新' : '班级已新增', 'success');
+            resetForm();
+            loadList(state.pageNum);
+        });
+    }
+
+    /** 复位表单到"新增班级"状态 */
+    function resetForm() {
+        $('#clazz-form')[0].reset();
+        $('#c-id').val('');
+        $('#form-title').text('新增班级');
+        $('#save-btn').text('新增班级');
+        $('#cancel-edit-btn').addClass('d-none');
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<!--
+  教师端·作业发布/编辑页（Batch 5 视图层，仅 ROLE_TEACHER，新增与编辑共用）。
+  编辑模式由查询参数 ?edit={id} 触发（PageController 的 /teacher/homework/new
+  与编辑共用本模板）：脚本用 HW.queryParam('edit') 判断，编辑时先
+  GET /api/teacher/homework/{id} 回填表单。保存一律 POST /api/teacher/homework
+  （id 为空发布新作业，非空编辑；Service 层校验班级存在、截止时间晚于当前、
+  编辑仅限本人）。参考附件先经 POST /api/file/upload（type=ref）落盘后回填路径。
+-->
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('发布作业')}"></head>
+<body>
+<nav th:replace="~{fragments/layout :: navbar('teacher-homework-new')}"></nav>
+
+<main class="hw-main">
+    <div class="container py-4">
+        <div class="row justify-content-center">
+            <div class="col-lg-8">
+                <div class="card">
+                    <div class="card-header bg-white">
+                        <!-- hw-title-accent：标题左侧品牌蓝渐变竖条（app.css 提供），作为层级锚点 -->
+                        <h1 class="h5 mb-0 hw-title-accent" id="page-title">发布作业</h1>
+                    </div>
+                    <div class="card-body">
+                        <form id="hw-form">
+                            <!-- 隐藏字段：编辑模式回填的作业ID（空=发布新作业） -->
+                            <input type="hidden" id="hw-id">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label" for="clazz-select">目标班级 <span class="text-danger">*</span></label>
+                                    <!-- 班级下拉：GET /api/common/clazz/options（教师仅返回本人授课班级） -->
+                                    <select class="form-select" id="clazz-select" required></select>
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label" for="total-score">作业满分（1-1000）</label>
+                                    <input class="form-control" id="total-score" type="number"
+                                           min="1" max="1000" value="100" required>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label" for="title">作业标题 <span class="text-danger">*</span></label>
+                                    <input class="form-control" id="title" maxlength="128" required
+                                           placeholder="例如：第三章课后习题 3.1-3.5">
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label" for="knowledge-tag">知识点标签 <span class="text-danger">*</span>
+                                        <span class="small text-muted">（教学看板的知识点雷达按此聚合，建议与教学大纲一致）</span></label>
+                                    <input class="form-control" id="knowledge-tag" maxlength="64" required
+                                           placeholder="例如：循环结构">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label" for="deadline">截止时间 <span class="text-danger">*</span></label>
+                                    <!-- datetime-local 控件：提交前经 HW.toApiDateTime 转成
+                                         后端 @JsonFormat 契约的 yyyy-MM-dd HH:mm:ss -->
+                                    <input class="form-control" id="deadline" type="datetime-local" required>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label" for="requirement">作业要求 <span class="text-danger">*</span></label>
+                                    <textarea class="form-control" id="requirement" rows="8" required
+                                              placeholder="题目、提交格式、评分标准等"></textarea>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label" for="ref-file">参考附件（可选）</label>
+                                    <input class="form-control" id="ref-file" type="file"
+                                           accept=".doc,.docx,.xls,.xlsx,.pdf,.txt,.zip,.png,.jpg,.jpeg">
+                                    <div class="form-text">支持 Word/Excel/PDF/TXT/压缩包/图片，单个不超过 50MB；
+                                        选择文件后点"上传参考附件"，成功后随表单一起保存。</div>
+                                    <div class="mt-2">
+                                        <!-- btn-soft：浅蓝渐变 + 品牌蓝文字 + 立体阴影 + 悬停上浮（app.css 提供），
+                                             与底部实心渐变的"保存作业"主按钮形成主次层级 -->
+                                        <button class="btn btn-sm btn-soft" type="button" id="upload-ref-btn">上传参考附件</button>
+                                        <span class="small ms-2" id="ref-status"></span>
+                                    </div>
+                                    <!-- 已上传/已存在的参考附件回显 -->
+                                    <div class="mt-2" id="ref-current"></div>
+                                </div>
+                            </div>
+                            <hr>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-primary" type="submit" id="save-btn">保存作业</button>
+                                <a class="btn btn-outline-secondary" href="/teacher/homework">返回列表</a>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer th:replace="~{fragments/layout :: footer}"></footer>
+<th:block th:replace="~{fragments/layout :: scripts(false)}"></th:block>
+<script>
+    // 编辑模式：?edit={id}（新发布时为空）；参考附件落盘路径（上传成功后回填）
+    var editId = HW.queryParam('edit');
+    var refPath = null;   // 当前表单使用的参考附件路径
+    var refName = null;   // 参考附件原始文件名
+
+    $(function () {
+        loadClazzOptions();
+        if (editId) {
+            $('#page-title').text('编辑作业');
+            loadHomework(editId);
+        } else {
+            // 新发布：截止时间默认给 7 天后（教师可调整）
+            var def = new Date(Date.now() + 7 * 24 * 3600 * 1000);
+            $('#deadline').val(HW.toLocalInput(fmtLocal(def)));
+        }
+        $('#hw-form').on('submit', onSave);
+        $('#upload-ref-btn').on('click', uploadRef);
+    });
+
+    /** Date -> yyyy-MM-dd HH:mm:ss 本地时间串（供 toLocalInput 转控件值） */
+    function fmtLocal(d) {
+        function p(n) { return n < 10 ? '0' + n : '' + n; }
+        return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' +
+            p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    }
+
+    /** 班级下拉：GET /api/common/clazz/options（Service 层只回本人授课班级） */
+    function loadClazzOptions() {
+        HW.get('/api/common/clazz/options').done(function (list) {
+            var $sel = $('#clazz-select').empty();
+            if (!list || list.length === 0) {
+                $sel.append('<option value="">（暂无授课班级，请联系管理员分配）</option>');
+                return;
+            }
+            $sel.append('<option value="">请选择班级</option>');
+            $.each(list, function (i, c) {
+                $sel.append('<option value="' + HW.esc(c.id) + '">' +
+                    HW.esc(c.clazzCode) + ' · ' + HW.esc(c.clazzName) + '</option>');
+            });
+        });
+    }
+
+    /** 编辑模式回填：GET /api/teacher/homework/{id}（Service 层校验仅限本人） */
+    function loadHomework(id) {
+        HW.get('/api/teacher/homework/' + id).done(function (hw) {
+            $('#hw-id').val(hw.id);
+            $('#clazz-select').val(hw.clazzId != null ? hw.clazzId : '');
+            $('#title').val(hw.title || '');
+            $('#knowledge-tag').val(hw.knowledgeTag || '');
+            $('#requirement').val(hw.requirement || '');
+            $('#total-score').val(hw.totalScore != null ? hw.totalScore : 100);
+            $('#deadline').val(HW.toLocalInput(hw.deadline));
+            // 已有参考附件回显（编辑时不上传新文件则沿用原路径）
+            refPath = hw.attachmentUrl || null;
+            refName = hw.attachmentName || null;
+            $('#ref-current').html(refPath
+                ? '<div class="small">当前参考附件：' + HW.fileLink(refPath, refName) +
+                  '（重新上传将覆盖）</div>' : '');
+        });
+    }
+
+    /** 参考附件上传：POST /api/file/upload（type=ref，按教师归档） */
+    function uploadRef() {
+        var file = $('#ref-file')[0].files[0];
+        if (!file) { HW.toast('请先选择文件', 'warning'); return; }
+        var fd = new FormData();
+        fd.append('file', file);
+        fd.append('type', 'ref');
+        $('#upload-ref-btn').prop('disabled', true);
+        $('#ref-status').text('上传中…').removeClass('text-success text-danger');
+        HW.upload('/api/file/upload', fd).done(function (path) {
+            refPath = path;
+            refName = file.name;
+            $('#ref-status').text('上传成功，保存作业时随表单生效').addClass('text-success');
+            $('#ref-current').html('<div class="small">待保存的参考附件：' + HW.esc(refName) +
+                '（保存后生效）</div>');
+        }).always(function () {
+            $('#upload-ref-btn').prop('disabled', false);
+        });
+    }
+
+    /** 保存：组装 HomeworkSaveDTO 契约的 JSON，POST /api/teacher/homework */
+    function onSave(e) {
+        e.preventDefault();
+        var deadlineVal = $('#deadline').val();
+        if (!deadlineVal) { HW.toast('请选择截止时间', 'warning'); return; }
+        var body = {
+            // 编辑时提交原ID（Service 层据此走 update 并校验仅限本人）
+            id: $('#hw-id').val() ? Number($('#hw-id').val()) : null,
+            clazzId: $('#clazz-select').val() ? Number($('#clazz-select').val()) : null,
+            title: $.trim($('#title').val()),
+            knowledgeTag: $.trim($('#knowledge-tag').val()),
+            requirement: $('#requirement').val(),
+            attachmentUrl: refPath,
+            attachmentName: refName,
+            totalScore: Number($('#total-score').val()),
+            // datetime-local -> 后端 @JsonFormat 契约格式（补 :00 秒位）
+            deadline: HW.toApiDateTime(deadlineVal)
+        };
+        $('#save-btn').prop('disabled', true).text('保存中…');
+        HW.postJson('/api/teacher/homework', body).done(function (id) {
+            HW.toast('保存成功', 'success');
+            // 新发布后直接进入该作业的提交名单页；编辑则回作业列表
+            if (editId) {
+                window.location.href = '/teacher/homework';
+            } else {
+                window.location.href = '/teacher/homework/' + id + '/roster';
+            }
+        }).always(function () {
+            $('#save-btn').prop('disabled', false).text('保存作业');
+        });
+    }
+</script>
+</body>
+</html>

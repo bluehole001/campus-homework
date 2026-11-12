@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<!--
+  登录页（Batch 5 视图层，匿名可访问 · 界面美化版）：
+  账号密码经 POST /api/auth/login（JSON）认证，成功后按返回的 role 分流到
+  对应角色首页；认证失败统一提示"用户名或密码错误"（后端不区分账号不存在
+  与密码错误，防账号枚举）。页面布局复用 fragments/layout 的 head/scripts 片段，
+  但不含导航栏（未登录时 sec:authorize 本也不会渲染）。
+
+  本次美化：改为"左侧品牌面板 + 右侧登录表单"的双栏卡片（窄屏自动隐藏左栏），
+  提交逻辑、角色分流与错误提示机制完全不变；全部样式来自 static/css/app.css。
+-->
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('登录')}"></head>
+<body>
+<!-- 双栏登录卡片（app.css 的 hw-login-wrap / hw-login-shell / hw-login-hero / hw-login-form） -->
+<div class="hw-login-wrap">
+    <div class="hw-login-shell">
+        <!-- ==================== 左栏：品牌面板（纯装饰，不含表单） ==================== -->
+        <div class="hw-login-hero">
+            <h2>班级学业管理与作业提交系统</h2>
+            <p class="hw-hero-sub">面向班级场景的作业全流程管理：发布 · 提交 · 查重 · 批改 · 成绩分析</p>
+            <ul class="hw-hero-points">
+                <li>
+                    <span class="hw-hero-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"
+                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M20 6 9 17l-5-5"/>
+                        </svg>
+                    </span>
+                    <span>多角色协同：学生提交、教师批改与查重复核、管理员维护班级与账号</span>
+                </li>
+                <li>
+                    <span class="hw-hero-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"
+                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M12 2v20M2 12h20"/>
+                        </svg>
+                    </span>
+                    <span>纯 JDK 实现 3-gram 词频向量查重，高重复自动预警并异步复核</span>
+                </li>
+                <li>
+                    <span class="hw-hero-ico" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"
+                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 3v18h18"/>
+                            <path d="M7 14l4-4 3 3 5-6"/>
+                        </svg>
+                    </span>
+                    <span>提交趋势、知识点雷达与成绩分布看板，班级学情一目了然</span>
+                </li>
+            </ul>
+        </div>
+
+        <!-- ==================== 右栏：登录表单 ==================== -->
+        <div class="hw-login-form">
+            <h1 class="hw-form-title">欢迎回来</h1>
+            <p class="hw-form-sub">请使用教务下发的账号登录</p>
+            <!-- 登录表单：AJAX 提交（不走传统 form 的 POST 转发重定向流程） -->
+            <form id="login-form" autocomplete="off">
+                <div class="mb-3">
+                    <label class="form-label" for="username">用户名</label>
+                    <input class="form-control" id="username" name="username"
+                           placeholder="学号/工号对应的用户名" required maxlength="32">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="password">密码</label>
+                    <input class="form-control" id="password" name="password" type="password"
+                           placeholder="初始密码 123456，登录后请尽快修改" required maxlength="32">
+                </div>
+                <!-- 错误提示位（凭证错误 / 账号禁用等 401 文案在此展示，不弹 toast） -->
+                <div id="login-error" class="hw-login-error mb-3 d-none"></div>
+                <button class="btn hw-login-btn w-100" type="submit" id="login-btn">登 录</button>
+            </form>
+            <p class="text-muted small mt-3 mb-0 text-center">
+                忘记密码或账号被禁用？请联系教务管理员重置密码。
+            </p>
+        </div>
+    </div>
+</div>
+<!-- 公共脚本（本地 jQuery/Bootstrap + api.js；登录页不加载 ECharts） -->
+<th:block th:replace="~{fragments/layout :: scripts(false)}"></th:block>
+<script>
+    // 角色 -> 首页映射（与 PageController.homeForRole 完全一致，仅用于登录成功后的跳转）
+    var HOME_MAP = {
+        ROLE_STUDENT: '/student/homework',
+        ROLE_TEACHER: '/teacher/homework',
+        ROLE_ADMIN: '/admin/clazz'
+    };
+    $(function () {
+        var $err = $('#login-error');
+        // 显示/隐藏错误提示（登录失败文案集中在此，避免 toast 一闪而过看不清）
+        function showError(msg) {
+            $err.text(msg || '登录失败').toggleClass('d-none', !msg);
+        }
+        $('#login-form').on('submit', function (e) {
+            e.preventDefault();
+            showError(null);
+            var body = {
+                username: $.trim($('#username').val()),
+                password: $('#password').val()
+            };
+            if (!body.username || !body.password) {
+                showError('请输入用户名和密码');
+                return;
+            }
+            $('#login-btn').prop('disabled', true).text('登录中…');
+            // silent:true：401 不触发 api.js 的自动跳转/toast，由本页自行展示错误
+            HW.postJson('/api/auth/login', body, { silent: true })
+                .done(function (me) {
+                    // 登录接口成功时 data 为脱敏 UserVO，按 role 分流到角色首页
+                    var home = HOME_MAP[me && me.role] || '/';
+                    window.location.href = home;
+                })
+                .fail(function (err) {
+                    // 业务 code 401（凭证错误/账号禁用）或网络异常：文案展示在表单下方
+                    showError(err && err.msg ? err.msg : '网络异常，请稍后重试');
+                    $('#login-btn').prop('disabled', false).text('登 录');
+                });
+        });
+    });
+</script>
+</body>
+</html>
