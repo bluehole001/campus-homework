@@ -23,7 +23,7 @@
 
 ### 1.2 包结构
 
-```
+```text
 com.campus.homework
 ├── config        # SecurityConfig / RedisConfig / RabbitMQConfig / MybatisPlusConfig / PasswordConfig 等
 ├── controller    # Auth / Student / Teacher / Admin / Common / File / Page（页面路由）
@@ -97,13 +97,60 @@ com.campus.homework
 
 ### 3.2 导入 SQL
 
-脚本自带建库语句，直接执行：
+请确保本地 MySQL 服务已启动。本项目提供了完整的建库、建表与初始化数据脚本，您可以选择以下方式导入：
+
+#### 方式一：使用命令行
+**⚠️ 注意**：Windows 的 PowerShell 不支持 `<` 符号重定向，请使用 CMD（命令提示符）或 Git Bash。
 
 ```bash
-mysql -uroot -p < sql/homework_init.sql
+# 进入项目根目录后，执行以下命令（-p 后回车输入密码）
+# 加上 --default-character-set=utf8mb4 防止中文乱码
+mysql -uroot -p --default-character-set=utf8mb4 < sql/homework_init.sql
 ```
 
-完成后自动创建 `campus_homework` 库、6 张表与初始化测试数据（1 管理员 + 3 教师 + 14 学生等，每张表不少于 5 条）。**所有测试账号密码统一为明文 `123456`**（库中存的是 BCrypt 密文），例如 `admin / 123456`、`teacher1 / 123456`、`stu101 / 123456`。
+#### 方式二：使用图形化工具（如 Navicat / DataGrip / SQLyog）
+1. 打开数据库管理工具，连接到本地 MySQL 8.0 实例。
+2. 新建查询窗口，将 `sql/homework_init.sql` 文件的全部内容复制进去。
+3. 全选并执行，即可自动建库建表并插入数据。
+
+#### 📋 初始化测试账号清单（共计 18 个）
+- **数据规模**：1 名管理员、3 名教师、14 名学生，另含 3 个班级及配套的作业、提交记录、公告与统计数据。
+- **安全规范**：所有密码均已使用 `BCryptPasswordEncoder` 加密入库，**所有账号的统一明文密码均为 `123456`**。
+
+**1. 管理员账号（1名）**
+
+| 账号 (Username) | 姓名 (Real Name) | 角色 (Role) | 管辖范围 |
+|---|---|---|---|
+| admin | 超级管理员 | ROLE_ADMIN | 全局数据维护、师生账号管理、CSV导入 |
+
+**2. 教师账号（3名）**
+
+| 账号 (Username) | 姓名 (Real Name) | 角色 (Role) | 所属院系 / 授课班级 |
+|---|---|---|---|
+| teacher1 | 张老师 | ROLE_TEACHER | 软件工程系 / 软件1班、软件2班 |
+| teacher2 | 李老师 | ROLE_TEACHER | 计算机科学系 / 计算机1班 |
+| teacher3 | 王老师 | ROLE_TEACHER | 软件工程系 / 跨班授课（用于测试教师IDOR防护） |
+
+**3. 学生账号（14名）**
+
+| 账号 (Username) | 姓名 (Real Name) | 角色 (Role) | 所属班级 |
+|---|---|---|---|
+| stu101 | 赵一 | ROLE_STUDENT | 软件1班 |
+| stu102 | 钱二 | ROLE_STUDENT | 软件1班 |
+| stu103 | 孙三 | ROLE_STUDENT | 软件1班 |
+| stu104 | 李四 | ROLE_STUDENT | 软件1班 |
+| stu105 | 周五 | ROLE_STUDENT | 软件1班 |
+| stu201 | 吴六 | ROLE_STUDENT | 软件2班 |
+| stu202 | 郑七 | ROLE_STUDENT | 软件2班 |
+| stu203 | 王八 | ROLE_STUDENT | 软件2班 |
+| stu204 | 冯九 | ROLE_STUDENT | 软件2班 |
+| stu205 | 陈十 | ROLE_STUDENT | 软件2班 |
+| stu301 | 褚十一 | ROLE_STUDENT | 计算机1班 |
+| stu302 | 卫十二 | ROLE_STUDENT | 计算机1班 |
+| stu303 | 蒋十三 | ROLE_STUDENT | 计算机1班 |
+| stu304 | 沈十四 | ROLE_STUDENT | 计算机1班 |
+
+> 💡 **提示**：在演示防越权（IDOR）功能时，可分别用 `teacher1` 和 `teacher2` 登录，或者用 `stu101`（软件1班）去尝试访问 `stu201`（软件2班）的作业 ID，展示系统在 Service 层对跨班级/跨用户的拦截效果。
 
 ### 3.3 配置 Redis / RabbitMQ / 邮件
 
@@ -210,7 +257,7 @@ Nginx 反代 8080 端口，`client_max_body_size 50m;`（匹配上传上限）�
 
 ## 五、项目结构速查
 
-```
+```text
 班级学业管理与作业提交系统/
 ├── pom.xml                      # Spring Boot 2.7.18 / JDK 17 / 50MB 上传上限
 ├── sql/homework_init.sql        # 建库建表 + 测试数据（密码 BCrypt 密文，明文统一 123456）
