@@ -25,6 +25,8 @@ Thumbs.db
 *.log
 AGENTS.md
 homework-plan.md
+project.config.json
+project.private.config.json
 
 # 业务运行产生的目录
 upload/
