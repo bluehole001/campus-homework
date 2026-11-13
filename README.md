@@ -163,24 +163,22 @@ Redis 与 RabbitMQ 用本机默认端口即可；**没有它们也能启动**（
 
 ## 五、技术亮点
 
+请求链路（单体应用内部）与异步旁路，一张图看完：
+
 ```mermaid
-flowchart LR
-  B["浏览器<br/>Thymeleaf 页面 · Bootstrap5 · jQuery · ECharts"]
-  subgraph APP["Spring Boot 2.7.18 单体应用"]
-    SEC["Spring Security<br/>URL 规则 + @PreAuthorize + Service 归属校验"]
-    C["Controller<br/>/api/**"]
-    S["Service 事务层<br/>afterCommit 精确失效"]
-    RC["RedisCacheUtils<br/>空值占位 · 互斥锁 · 批量失效"]
-    RT["RabbitTemplate<br/>JSON 转换器 + Confirm/Return"]
-  end
-  DB[("MySQL 8.0<br/>6 张表 · SQL 全预编译")]
-  R[("Redis<br/>列表缓存 / 成绩缓存")]
+flowchart TD
+  B["浏览器 · Thymeleaf 页面<br/>Bootstrap5 + jQuery + ECharts"]
+  SEC["Spring Security<br/>URL 规则 + @PreAuthorize"]
+  C["Controller /api/**"]
+  S["Service 事务层<br/>afterCommit 精确失效"]
+  DB[("MySQL 8.0 · 6 张表<br/>SQL 全预编译")]
+  R[("Redis<br/>列表 / 成绩缓存")]
   MQ{{"RabbitMQ<br/>direct 交换机 + DLX/DLQ"}}
   W["消费者<br/>查重 · 成绩预热 · 批量邮件"]
   B --> SEC --> C --> S
   S --> DB
-  S --> RC --> R
-  S -->|事务提交后投递| RT --> MQ --> W --> DB
+  S --> R
+  S -->|"事务提交后投递"| MQ --> W --> DB
 ```
 
 - **缓存三防**：`__NULL__` 占位防穿透；SETNX 互斥锁 + Lua 令牌解锁（10s TTL 防死锁）防击穿；
