@@ -131,15 +131,15 @@ CREATE TABLE monthly_submit_stat (
 -- 密文由 BCryptPasswordEncoder(strength=10, $2a) 生成，可直接登录验证
 -- =====================================================================
 
--- 1. clazz_info：5 个班级
+-- 1. clazz_info：5 个班级（student_count 与下方 sys_user 各班在册学生数逐一相等，数据自洽）
 INSERT INTO clazz_info (id, clazz_code, clazz_name, department, student_count, create_time) VALUES
 (1, 'CS2023-01', '计算机科学与技术2023级1班', '计算机学院', 4, DATE_SUB(NOW(), INTERVAL 120 DAY)),
 (2, 'CS2023-02', '计算机科学与技术2023级2班', '计算机学院', 3, DATE_SUB(NOW(), INTERVAL 120 DAY)),
 (3, 'SE2023-01', '软件工程2023级1班',         '软件学院',   3, DATE_SUB(NOW(), INTERVAL 118 DAY)),
-(4, 'AI2024-01', '人工智能2024级1班',         '计算机学院', 3, DATE_SUB(NOW(), INTERVAL 60 DAY)),
-(5, 'DS2024-01', '数据科学与大数据技术2024级1班', '数学学院', 3, DATE_SUB(NOW(), INTERVAL 60 DAY));
+(4, 'AI2024-01', '人工智能2024级1班',         '计算机学院', 2, DATE_SUB(NOW(), INTERVAL 60 DAY)),
+(5, 'DS2024-01', '数据科学与大数据技术2024级1班', '数学学院', 1, DATE_SUB(NOW(), INTERVAL 60 DAY));
 
--- 2. sys_user：1 管理员 + 3 教师 + 14 学生（共 18 条，密码统一 123456）
+-- 2. sys_user：1 管理员 + 3 教师 + 13 学生（共 17 条，密码统一 123456）
 -- 密文：$2a$10$vYEZYzkh/f0UqhyoJX45g.6/OUxW3MYkS6sugfv3u/3ujA0hcFtya
 INSERT INTO sys_user (id, user_no, username, password, real_name, clazz_id, email, role, status, create_time) VALUES
 -- 教务管理员
@@ -161,27 +161,30 @@ INSERT INTO sys_user (id, user_no, username, password, real_name, clazz_id, emai
 (12, 'S20230301', 'stu301', '$2a$10$vYEZYzkh/f0UqhyoJX45g.6/OUxW3MYkS6sugfv3u/3ujA0hcFtya', '黄强',   3, 'huangqiang@stu.campus.edu.cn','ROLE_STUDENT', 1, DATE_SUB(NOW(), INTERVAL 118 DAY)),
 (13, 'S20230302', 'stu302', '$2a$10$vYEZYzkh/f0UqhyoJX45g.6/OUxW3MYkS6sugfv3u/3ujA0hcFtya', '徐丽',   3, 'xuli@stu.campus.edu.cn',      'ROLE_STUDENT', 1, DATE_SUB(NOW(), INTERVAL 118 DAY)),
 (14, 'S20230303', 'stu303', '$2a$10$vYEZYzkh/f0UqhyoJX45g.6/OUxW3MYkS6sugfv3u/3ujA0hcFtya', '马俊',   3, 'majun@stu.campus.edu.cn',     'ROLE_STUDENT', 1, DATE_SUB(NOW(), INTERVAL 118 DAY)),
--- 班级4学生（3人）
+-- 班级4学生（2人）
 (15, 'S20240401', 'stu401', '$2a$10$vYEZYzkh/f0UqhyoJX45g.6/OUxW3MYkS6sugfv3u/3ujA0hcFtya', '林峰',   4, 'linfeng@stu.campus.edu.cn',   'ROLE_STUDENT', 1, DATE_SUB(NOW(), INTERVAL 60 DAY)),
-(16, 'S20240402', 'stu402', '$2a$10$vYEZYzkh/f0UqhyoJX45g.6/OUxW3MYkS6sugfv3u/3ujA0hcFtya', '何雪',   4, 'hexue@stu.campus.edu.cn',     'ROLE_STUDENT', 1, DATE_SUB(NOW(), INTERVAL 60 DAY));
+(16, 'S20240402', 'stu402', '$2a$10$vYEZYzkh/f0UqhyoJX45g.6/OUxW3MYkS6sugfv3u/3ujA0hcFtya', '何雪',   4, 'hexue@stu.campus.edu.cn',     'ROLE_STUDENT', 1, DATE_SUB(NOW(), INTERVAL 60 DAY)),
+-- 班级5学生（1人，补齐后 sys_user 各班实数与 clazz_info.student_count 逐班一致）
+(17, 'S20240501', 'stu501', '$2a$10$vYEZYzkh/f0UqhyoJX45g.6/OUxW3MYkS6sugfv3u/3ujA0hcFtya', '诸一帆', 5, 'zhuyifan@stu.campus.edu.cn', 'ROLE_STUDENT', 1, DATE_SUB(NOW(), INTERVAL 60 DAY));
 
 -- 3. homework_task：6 条作业（3 条已截止、2 条未截止、1 条临近截止<24h，覆盖逾期/催交场景）
 INSERT INTO homework_task (id, clazz_id, teacher_id, title, knowledge_tag, requirement, attachment_url, attachment_name, total_score, deadline, is_score_published, submit_count, create_time) VALUES
 (1, 1, 2, '数据库规范化理论作业',   '数据库设计',   '完成第3章课后题3.2、3.5：对给定关系模式进行范式判定并写出无损分解过程，提交Word正文与解题PDF附件。', '/files/ref/normalization_guide.pdf', '规范化理论参考资料.pdf', 100, DATE_SUB(NOW(), INTERVAL 10 DAY), 1, 3, DATE_SUB(NOW(), INTERVAL 17 DAY)),
-(2, 1, 2, 'SQL查询综合练习',        'SQL编程',      '基于教学示例库完成10道多表连接与子查询练习，正文写明SQL语句与执行结果说明。', '/files/ref/sql_exercise_dataset.sql', 'SQL练习数据集.sql',       100, DATE_SUB(NOW(), INTERVAL 5 DAY),  0, 2, DATE_SUB(NOW(), INTERVAL 12 DAY)),
+(2, 1, 2, 'SQL查询综合练习',        'SQL编程',      '基于教学示例库完成10道多表连接与子查询练习，正文写明SQL语句与执行结果说明。', '/files/ref/sql_exercise_dataset.sql', 'SQL练习数据集.sql',       100, DATE_SUB(NOW(), INTERVAL 5 DAY),  0, 3, DATE_SUB(NOW(), INTERVAL 12 DAY)),
 (3, 1, 3, '操作系统进程调度实验',   '操作系统',     '编写FCFS/SJF/时间片轮转三种调度算法的模拟程序，提交源码与实验报告，报告需含平均周转时间对比表。', '/files/ref/scheduling_template.docx', '实验报告模板.docx',   100, DATE_SUB(NOW(), INTERVAL 2 DAY),  0, 2, DATE_SUB(NOW(), INTERVAL 9 DAY)),
 (4, 1, 2, '计算机网络协议分析',     '计算机网络',   '抓包分析HTTP/TCP三次握手过程，提交抓包截图与协议字段逐项说明。', NULL, NULL, 100, DATE_ADD(NOW(), INTERVAL 18 HOUR), 0, 1, DATE_SUB(NOW(), INTERVAL 3 DAY)),
 (5, 2, 3, 'Java面向对象编程作业',   '面向对象',     '设计一个含继承与多态的小型库存管理系统，提交完整源码压缩包与UML类图。', '/files/ref/oop_assignment_spec.pdf', '作业规格说明书.pdf', 100, DATE_ADD(NOW(), INTERVAL 5 DAY),  0, 2, DATE_SUB(NOW(), INTERVAL 4 DAY)),
 (6, 3, 4, '软件需求规格说明书编写', '需求工程',     '选取一个校园场景编写SRS文档，包含用例图、功能需求与非功能需求清单。', '/files/ref/srs_standard_excerpt.pdf', 'SRS标准节选.pdf', 100, DATE_SUB(NOW(), INTERVAL 1 DAY),  0, 2, DATE_SUB(NOW(), INTERVAL 8 DAY));
 
--- 4. homework_submission：12 条（含按时交、逾期未交、已批改、未交占位；1、2号作业正文高度相似用于查重预警演示）
+-- 4. homework_submission：15 条（含按时交、逾期未交、已批改、未交占位；1、2号作业正文高度相似用于查重预警演示）
+-- 数据自洽：每条作业的"已交记录数"与 homework_task.submit_count 逐一相等（作业6 由 14/15 两条补齐）
 -- 相似度为 N-Gram + 余弦相似度算法的预置演示值，系统重新查重时会被覆盖
 INSERT INTO homework_submission (id, homework_id, student_id, content_text, file_url, file_name, submit_status, similarity_rate, similar_student_id, is_high_repeat, score, teacher_comment, submit_time, grade_time) VALUES
 -- 作业1（已截止、成绩已发布）：3 人按时交并批改，其中 stu102 与 stu103 正文高度相似触发预警
 (1, 1, 5,  '关系模式R(U,F)中F={A->B,B->C,C->D}，逐一判定各属性闭包后可知R存在非主属性对码的部分函数依赖，因此R属于1NF但不属于2NF。无损分解步骤：先按A->B拆出R1(A,B)，剩余R2(A,C,D)仍含A->C的传递依赖，继续拆出R3(A,C)，最终R4(C,D)。分解后各子模式均达到3NF，且连接后信息无损。', '/files/hw1/5.docx', '规范化理论作业_陈明.docx', 3, 0.4213, 6,    0, 92.0, '范式判定过程完整，无损分解步骤清晰，继续保持。', DATE_SUB(NOW(), INTERVAL 11 DAY), DATE_SUB(NOW(), INTERVAL 9 DAY)),
 (2, 1, 6,  '关系模式R(U,F)中F={A->B,B->C,C->D}，逐一判定各属性闭包后可知R存在非主属性对码的部分函数依赖，因此R属于1NF但不属于2NF。无损分解过程：先按A->B拆出R1(A,B)，剩余R2(A,C,D)仍含A->C的传递依赖，继续拆出R3(A,C)，最终得到R4(C,D)。分解后各子模式均达到3NF，且自然连接后信息无损。', '/files/hw1/6.docx', '规范化理论作业_刘洋.docx', 3, 0.9612, 7,    1, 85.0, '结论正确，但正文与赵磊同学高度雷同，已触发高重复预警，请注意独立写作。', DATE_SUB(NOW(), INTERVAL 11 DAY), DATE_SUB(NOW(), INTERVAL 9 DAY)),
 (3, 1, 7,  '关系模式R(U,F)中F={A->B,B->C,C->D}，逐一判定各属性闭包后可知R存在非主属性对码的部分函数依赖，因此R属于1NF但不属于2NF。无损分解过程：先按A->B拆出R1(A,B)，剩余R2(A,C,D)仍含A->C的传递依赖，继续拆出R3(A,C)，最终得到R4(C,D)。分解后各子模式均达到3NF，且自然连接后信息无损。', '/files/hw1/7.docx', '规范化理论作业_赵磊.docx', 3, 0.9612, 6,    1, 85.0, '结论正确，但正文与刘洋同学高度雷同，已触发高重复预警，请注意独立写作。', DATE_SUB(NOW(), INTERVAL 10 DAY), DATE_SUB(NOW(), INTERVAL 9 DAY)),
--- 作业2（已截止）：2 人按时交未批改 + 1 人逾期未交 + 1 人未交占位
+-- 作业2（已截止）：2 人按时交未批改 + 1 人逾期补交（刘洋）+ 1 人未交占位
 (4, 2, 5,  '练习1：SELECT sname FROM student WHERE dept=''计算机'' AND score>=85; 说明：先按院系过滤再按成绩过滤。练习2：SELECT c.cname FROM course c JOIN sc ON c.cid=sc.cid WHERE sc.sid=20230101; 说明：用学号定位选课记录再连接课程表取课名。', '/files/hw2/5.docx', 'SQL练习_陈明.docx', 1, NULL, NULL, 0, NULL, NULL, DATE_SUB(NOW(), INTERVAL 4 DAY), NULL),
 (5, 2, 8,  '第1题用子查询实现：SELECT * FROM student WHERE dept IN (SELECT dept FROM student WHERE sid=20230104)。第2题用EXISTS改写相关子查询。第3题用LEFT JOIN统计各课程选修人数并按人数降序输出。全部语句已在本地MySQL 8.0验证通过。', '/files/hw2/8.docx', 'SQL练习_孙倩.docx', 1, NULL, NULL, 0, NULL, NULL, DATE_SUB(NOW(), INTERVAL 4 DAY), NULL),
 (6, 2, 6,  '完成前5题，后5题因实验机房排队未完成。第1题：SELECT sname FROM student WHERE dept=''计算机''; 其余题目只写了思路未写SQL。', '/files/hw2/6.docx', 'SQL练习_刘洋_补交.docx', 2, NULL, NULL, 0, NULL, NULL, DATE_ADD(NOW(), INTERVAL 1 DAY), NULL),
@@ -194,7 +197,10 @@ INSERT INTO homework_submission (id, homework_id, student_id, content_text, file
 (11, 4, 7, '用Wireshark抓取浏览器访问http://example.com的完整过程，过滤tcp.port==80。三次握手：SYN(seq=0,flags=0x02)->SYN-ACK(seq=0,ack=1)->ACK(ack=1)。HTTP请求报文含GET / HTTP/1.1与Host头，响应为301重定向。逐项字段说明见截图标注。', '/files/hw4/7.zip', '协议分析_赵磊.zip', 1, NULL, NULL, 0, NULL, NULL, DATE_SUB(NOW(), INTERVAL 1 DAY), NULL),
 -- 作业5（未截止，5天后）：2 人已交
 (12, 5, 9,  '设计Product基类与Warehouse/Store子类，利用多态实现统一入库接口；含接口Stockable、抽象类校验库存上下限。UML类图见压缩包内class_diagram.png，全部代码通过JUnit5自测。', '/files/hw5/9.zip', 'OO作业_周涛.zip', 1, NULL, NULL, 0, NULL, NULL, DATE_SUB(NOW(), INTERVAL 2 DAY), NULL),
-(13, 5, 10, '库存管理系统采用组合而非继承：StockItem持有策略对象ReplenishPolicy，实现不同补货策略切换。附UML类图与测试报告，覆盖增删改查与并发扣减场景。', '/files/hw5/10.zip', 'OO作业_吴迪.zip', 1, NULL, NULL, 0, NULL, NULL, DATE_SUB(NOW(), INTERVAL 2 DAY), NULL);
+(13, 5, 10, '库存管理系统采用组合而非继承：StockItem持有策略对象ReplenishPolicy，实现不同补货策略切换。附UML类图与测试报告，覆盖增删改查与并发扣减场景。', '/files/hw5/10.zip', 'OO作业_吴迪.zip', 1, NULL, NULL, 0, NULL, NULL, DATE_SUB(NOW(), INTERVAL 2 DAY), NULL),
+-- 作业6（已截止1天）：class3 的 stu301/stu302 按时交未批改（补齐后"已交记录数"与 hw6.submit_count=2 一致）
+(14, 6, 12, '选取校园快递驿站场景编写SRS：用例图含寄件/取件/投诉三类参与者，功能需求12条，非功能需求含响应时间与并发指标；附用例图与需求-用例追溯矩阵。', '/files/hw6/12.docx', 'SRS_黄强.docx', 1, NULL, NULL, 0, NULL, NULL, DATE_SUB(NOW(), INTERVAL 20 HOUR), NULL),
+(15, 6, 13, '选取二手教材交易场景编写SRS：含用例图、消息提醒的发布-订阅式需求、以及隐私合规的非功能需求；初稿已按SRS标准节选的章节结构组织。', '/files/hw6/13.docx', 'SRS_徐丽.docx', 1, NULL, NULL, 0, NULL, NULL, DATE_SUB(NOW(), INTERVAL 18 HOUR), NULL);
 
 -- 5. clazz_notice：6 条公告（含 2 条置顶）
 INSERT INTO clazz_notice (id, clazz_id, teacher_id, title, content, is_top, create_time) VALUES

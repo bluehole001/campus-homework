@@ -1,0 +1,82 @@
+# =====================================================================
+# 生产/集成验证环境（test）：独立测试实例上的完整集成验证配置
+# 启动方式：java -jar campus-homework.jar --spring.profiles.active=test
+#   或在测试代码中 @ActiveProfiles("test")
+# 与 dev（本机日常调试）/ prod（Linux 生产）并列为任务书要求的三 profile 之一：
+#   - 数据库/Redis/MQ/邮件连接参数一律来自 DEPLOY_TEST_* 环境变量，默认值指向
+#     本机独立测试实例（端口与 dev 刻意错开，互不干扰，可与 dev 同机并行运行）
+#   - 库名保持 campus_homework，与 sql/homework_init.sql 直接兼容（脚本自建库）
+#   - 邮件 enabled=false：集成验证不真实投递，仅日志记录（失败不影响用例）
+#   - MQ 消费者不自动启动（auto-startup: false），集成测试手动触发投递，
+#     避免 CI 环境无 broker 时消费者空转告警
+# =====================================================================
+server:
+  # 与 dev(9090)/答辩演示端口错开，同机并行部署互不冲突
+  port: 9092
+  servlet:
+    context-path: /
+
+spring:
+  # 测试环境同样开启 Thymeleaf 强缓存，验证与 prod 一致的渲染行为
+  thymeleaf:
+    cache: true
+
+  # 测试数据源：独立实例/独立库，敏感项由 DEPLOY_TEST_* 注入（本地默认与 dev 同实例同库，便于冒烟）
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${DEPLOY_TEST_DB_HOST:localhost}:${DEPLOY_TEST_DB_PORT:3306}/campus_homework?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${DEPLOY_TEST_DB_USER:root}
+    password: ${DEPLOY_TEST_DB_PASSWORD:123456}
+    hikari:
+      # 测试池小于 prod、大于 dev 最小值：贴近集成验证的并发规模
+      minimum-idle: 5
+      maximum-pool-size: 20
+      connection-timeout: 10000
+
+  # 测试 Redis：使用 db 1 与 dev(db 0) 逻辑隔离，避免测试预热数据污染开发缓存
+  redis:
+    host: ${DEPLOY_TEST_REDIS_HOST:localhost}
+    port: ${DEPLOY_TEST_REDIS_PORT:6379}
+    password: ${DEPLOY_TEST_REDIS_PASSWORD:}
+    database: 1
+    timeout: 5000ms
+    lettuce:
+      pool:
+        max-active: 16
+        max-idle: 8
+        min-idle: 2
+
+  # 测试 RabbitMQ：默认与 dev 同 broker、独立 vhost /homework-test（需预建，与生产同策略）
+  rabbitmq:
+    host: ${DEPLOY_TEST_MQ_HOST:localhost}
+    port: ${DEPLOY_TEST_MQ_PORT:5672}
+    username: ${DEPLOY_TEST_MQ_USER:guest}
+    password: ${DEPLOY_TEST_MQ_PASSWORD:guest}
+    virtual-host: ${DEPLOY_TEST_MQ_VHOST:/homework-test}
+    dynamic: false            # 禁止动态声明队列（与 dev 同策略）
+    listener:
+      simple:
+        auto-startup: false   # 消费者不自动启动：集成测试手动投递/消费
+        missing-queues-fatal: false
+
+  # 测试邮件：保留连接配置但关闭真实投递
+  mail:
+    host: ${DEPLOY_TEST_MAIL_HOST:smtp.qq.com}
+    port: ${DEPLOY_TEST_MAIL_PORT:465}
+    username: ${DEPLOY_TEST_MAIL_USER:test_sender@qq.com}
+    password: ${DEPLOY_TEST_MAIL_PASSWORD:test_auth_code}
+    default-encoding: UTF-8
+
+# 测试附件落盘目录：与 dev/prod 物理隔离，验证上传下载链路不污染真实附件
+homework:
+  upload:
+    dir: ./upload-test
+  mail:
+    sender: ${DEPLOY_TEST_MAIL_USER:test_sender@qq.com}
+    enabled: false
+
+# 测试日志：SQL 输出 DEBUG 便于逐条核对 #{} 预编译与数据自洽性
+logging:
+  level:
+    com.campus.homework: debug
+    com.campus.homework.mapper: debug

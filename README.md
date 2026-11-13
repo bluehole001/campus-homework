@@ -15,7 +15,7 @@
 | ORM | MyBatis-Plus 3.5.3.1 | 全部 SQL 100% `#{}` 预编译，杜绝 `${}` 拼接 |
 | 视图层 | Thymeleaf + Bootstrap 5 + jQuery 3.7.1 + ECharts 5.5.0 | 服务端渲染 + 本地化静态库（离线可用，禁 Vue/React） |
 | 安全 | Spring Security（BCrypt + 三级角色） | `ROLE_STUDENT` / `ROLE_TEACHER` / `ROLE_ADMIN`，URL 规则 + `@PreAuthorize` + Service 层 IDOR 三重防御 |
-| 缓存 | Redis（Lettuce 连接池） | 班级作业/公告列表缓存、成绩分析与个人成绩缓存；`__NULL__` 空值占位防穿透；写路径事务 afterCommit 精确失效 |
+| 缓存 | Redis（Lettuce 连接池） | 班级作业/公告列表缓存、成绩分析与个人成绩缓存；`__NULL__` 空值占位防穿透；SETNX 互斥锁收口并发回源防击穿（Lua 令牌解锁 + 10s TTL 防死锁）；写路径事务 afterCommit 精确失效；故障自动降级回源 |
 | 消息队列 | RabbitMQ（direct 交换机 + 死信队列 DLX/DLQ） | 异步查重、成绩分析与 Redis 预热、批量邮件；手动 ACK + 消费重试 3 次后入 DLQ |
 | 定时任务 | Spring Task `@Scheduled` | 每 10 分钟逾期标记、每日 8:30 催交邮件、每月 1 日月度统计报表 |
 | 邮件 | JavaMailSender | 成绩发布通知与截止前 24 小时催交（dev 环境默认关闭真实投递） |
@@ -113,44 +113,46 @@ mysql -uroot -p --default-character-set=utf8mb4 < sql/homework_init.sql
 2. 新建查询窗口，将 `sql/homework_init.sql` 文件的全部内容复制进去。
 3. 全选并执行，即可自动建库建表并插入数据。
 
-#### 📋 初始化测试账号清单（共计 18 个）
-- **数据规模**：1 名管理员、3 名教师、14 名学生，另含 3 个班级及配套的作业、提交记录、公告与统计数据。
+#### 📋 初始化测试账号清单（共计 17 个，与 `sql/homework_init.sql` 逐行一致）
+- **数据规模**：1 名管理员、3 名教师、13 名学生，分布在 5 个班级；配套 6 份作业（4 已截止、1 临近 24h、1 未截止）、15 条提交记录（含高重复预警演示）、6 条公告（2 置顶）与 6 条月度统计。各班在册人数与 `clazz_info.student_count` 逐班一致。
 - **安全规范**：所有密码均已使用 `BCryptPasswordEncoder` 加密入库，**所有账号的统一明文密码均为 `123456`**。
 
 **1. 管理员账号（1名）**
 
 | 账号 (Username) | 姓名 (Real Name) | 角色 (Role) | 管辖范围 |
 |---|---|---|---|
-| admin | 超级管理员 | ROLE_ADMIN | 全局数据维护、师生账号管理、CSV导入 |
+| admin | 教务处管理员 | ROLE_ADMIN | 全局数据维护、师生账号管理、CSV导入 |
 
-**2. 教师账号（3名）**
+**2. 教师账号（3名，按 SQL 作业表实际授课分布）**
 
-| 账号 (Username) | 姓名 (Real Name) | 角色 (Role) | 所属院系 / 授课班级 |
+| 账号 (Username) | 姓名 (Real Name) | 角色 (Role) | 实际发布作业的班级 |
 |---|---|---|---|
-| teacher1 | 张老师 | ROLE_TEACHER | 软件工程系 / 软件1班、软件2班 |
-| teacher2 | 李老师 | ROLE_TEACHER | 计算机科学系 / 计算机1班 |
-| teacher3 | 王老师 | ROLE_TEACHER | 软件工程系 / 跨班授课（用于测试教师IDOR防护） |
+| teacher1 | 王建国 | ROLE_TEACHER | 计算机2023级1班（作业1数据库规范化、作业2 SQL练习、作业4 协议分析） |
+| teacher2 | 李晓红 | ROLE_TEACHER | 计算机2023级1班（作业3 操作系统实验）、计算机2023级2班（作业5 Java OO） |
+| teacher3 | 张卫民 | ROLE_TEACHER | 软件工程2023级1班（作业6 SRS 编写）——跨班用于测试教师 IDOR 防护 |
 
-**3. 学生账号（14名）**
+**3. 学生账号（13名，按 SQL 真实班级映射）**
 
 | 账号 (Username) | 姓名 (Real Name) | 角色 (Role) | 所属班级 |
 |---|---|---|---|
-| stu101 | 赵一 | ROLE_STUDENT | 软件1班 |
-| stu102 | 钱二 | ROLE_STUDENT | 软件1班 |
-| stu103 | 孙三 | ROLE_STUDENT | 软件1班 |
-| stu104 | 李四 | ROLE_STUDENT | 软件1班 |
-| stu105 | 周五 | ROLE_STUDENT | 软件1班 |
-| stu201 | 吴六 | ROLE_STUDENT | 软件2班 |
-| stu202 | 郑七 | ROLE_STUDENT | 软件2班 |
-| stu203 | 王八 | ROLE_STUDENT | 软件2班 |
-| stu204 | 冯九 | ROLE_STUDENT | 软件2班 |
-| stu205 | 陈十 | ROLE_STUDENT | 软件2班 |
-| stu301 | 褚十一 | ROLE_STUDENT | 计算机1班 |
-| stu302 | 卫十二 | ROLE_STUDENT | 计算机1班 |
-| stu303 | 蒋十三 | ROLE_STUDENT | 计算机1班 |
-| stu304 | 沈十四 | ROLE_STUDENT | 计算机1班 |
+| stu101 | 陈明 | ROLE_STUDENT | 计算机科学与技术2023级1班（CS2023-01） |
+| stu102 | 刘洋 | ROLE_STUDENT | 同上（高重复预警演示账号之一） |
+| stu103 | 赵磊 | ROLE_STUDENT | 同上（与 stu102 正文高度雷同，预警演示对照组） |
+| stu104 | 孙倩 | ROLE_STUDENT | 同上 |
+| stu201 | 周涛 | ROLE_STUDENT | 计算机科学与技术2023级2班（CS2023-02） |
+| stu202 | 吴迪 | ROLE_STUDENT | 同上 |
+| stu203 | 郑爽 | ROLE_STUDENT | 同上 |
+| stu301 | 黄强 | ROLE_STUDENT | 软件工程2023级1班（SE2023-01） |
+| stu302 | 徐丽 | ROLE_STUDENT | 同上 |
+| stu303 | 马俊 | ROLE_STUDENT | 同上 |
+| stu401 | 林峰 | ROLE_STUDENT | 人工智能2024级1班（AI2024-01） |
+| stu402 | 何雪 | ROLE_STUDENT | 同上 |
+| stu501 | 诸一帆 | ROLE_STUDENT | 数据科学与大数据技术2024级1班（DS2024-01） |
 
-> 💡 **提示**：在演示防越权（IDOR）功能时，可分别用 `teacher1` 和 `teacher2` 登录，或者用 `stu101`（软件1班）去尝试访问 `stu201`（软件2班）的作业 ID，展示系统在 Service 层对跨班级/跨用户的拦截效果。
+> 💡 **IDOR 演示提示**（与 SQL 数据精确对应）：
+> - **学生水平越权**：用 `stu101`（计科1班）登录后改 URL 访问作业 5（Java OO 作业，属计科2班）详情接口 → 返回 403；同班内 stu101 想看 stu102 的成绩，成绩未发布前一律不可见。
+> - **教师水平越权**：用 `teacher3`（只发布作业6）访问作业 1 的提交名单 `/api/teacher/homework/1/roster` → 403（只能批改自己发布的作业）。
+> - **查重预警演示**：用 `teacher1` 查看作业 1 名单，stu102 与 stu103 正文相似度 0.9612 红色高亮，互相指向对方为"最相似同学"。
 
 ### 3.3 配置 Redis / RabbitMQ / 邮件
 
@@ -260,11 +262,14 @@ Nginx 反代 8080 端口，`client_max_body_size 50m;`（匹配上传上限）�
 ```text
 班级学业管理与作业提交系统/
 ├── pom.xml                      # Spring Boot 2.7.18 / JDK 17 / 50MB 上传上限
+├── AGENTS.md / homework-plan.md # 工程契约（铁律）与 5-Batch 执行计划
 ├── sql/homework_init.sql        # 建库建表 + 测试数据（密码 BCrypt 密文，明文统一 123456）
+├── docs/项目开发文档.md          # 需求分析 + E-R 图 + 系统设计 + 分工 + 测试（交付物）
 ├── deploy/Linux部署说明.md      # Linux 完整部署运维手册
-├── src/main/java/com/campus/homework/     # 81 个 Java 源文件（注释率 35.2%）
+├── src/main/java/com/campus/homework/     # 82 个 Java 源文件（注释率 44%+）
+├── src/test/java/…/utils/       # 3 个测试类 21 项用例（查重算法/上传安全/响应契约），mvn test 全绿
 ├── src/main/resources/
-│   ├── application.yml / -dev.yml / -prod.yml   # 多环境配置
+│   ├── application.yml / -dev.yml / -test.yml / -prod.yml   # 多环境配置（任务书要求 dev/test/prod 齐备）
 │   ├── templates/               # Thymeleaf：fragments/layout.html + 13 个页面（登录/学生3/教师6/管理3）
 │   └── static/                  # vendor/（Bootstrap5/jQuery/ECharts5 本地库）、css/app.css、js/api.js
 └── target/campus-homework.jar   # mvn package 产物

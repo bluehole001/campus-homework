@@ -81,6 +81,16 @@ public final class Constants {
     /** 个人成绩缓存键通配后缀（发布成绩时按 homework:score:stu:{hwId}:* 批量清理） */
     public static final String CACHE_SCORE_STUDENT_WILDCARD = "*";
 
+    // ==================== 缓存互斥锁（防击穿，RedisCacheUtils 回源协调用） ====================
+    /** 互斥锁键前缀：homework:lock:{原缓存键}——未命中时仅抢锁成功者回源，其余请求等缓存重建 */
+    public static final String CACHE_LOCK_PREFIX = "homework:lock:";
+    /** 锁持有超时（秒）：即使持有者宕机未释放，锁也在 10 秒后自动过期，绝不死锁 */
+    public static final long CACHE_LOCK_TTL = 10L;
+    /** 未抢到锁的请求自旋等待缓存重建的最长毫秒数：超时后照常回源（宁可多查一次，绝不阻断业务） */
+    public static final long CACHE_LOCK_WAIT_MS = 3000L;
+    /** 自旋等待的轮询间隔毫秒数：50ms 一轮，最长约 60 轮 */
+    public static final long CACHE_LOCK_WAIT_INTERVAL_MS = 50L;
+
     // ==================== RabbitMQ 拓扑（Batch 4 声明时复用） ====================
     /** 业务直连交换机：承载查重/统计/邮件三类路由 */
     public static final String EXCHANGE_HOMEWORK = "homework.direct.exchange";

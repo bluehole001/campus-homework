@@ -126,6 +126,15 @@ public class ClazzNoticeServiceImpl extends ServiceImpl<ClazzNoticeMapper, Clazz
         if (clazzInfoMapper.selectById(dto.getClazzId()) == null) {
             throw new NotFoundException("目标班级不存在: " + dto.getClazzId());
         }
+        // 水平越权：教师仅可向自己授课（该班已有本人发布的作业）的班级发布/迁移公告。
+        // 口径与 listByClazz 的读取校验完全一致——否则会出现"教师能往非授课班塞公告、
+        // 该班学生看得到，教师自己按读取规则却看不到"的权限不对称。
+        Long teaching = homeworkTaskMapper.selectCount(new LambdaQueryWrapper<HomeworkTask>()
+                .eq(HomeworkTask::getTeacherId, operator.getUserId())
+                .eq(HomeworkTask::getClazzId, dto.getClazzId()));
+        if (teaching == null || teaching == 0) {
+            throw new ForbiddenException("只能向自己授课的班级发布公告");
+        }
         // 置顶开关归一化：非 1 一律视为不置顶
         int isTop = dto.getIsTop() != null && dto.getIsTop() == Constants.NOTICE_TOP ? Constants.NOTICE_TOP : Constants.NOTICE_NOT_TOP;
         if (dto.getId() == null) {
