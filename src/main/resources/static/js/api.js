@@ -214,7 +214,9 @@ window.HW = (function ($) {
             backgroundColor: 'transparent',
             color: ['#3b82f6', '#22d3ee', '#16a34a', '#dc2626', '#f59e0b', '#6366f1'],
             textStyle: { color: '#475569', fontFamily: '-apple-system, "Segoe UI", "Microsoft YaHei", sans-serif' },
-            grid: { left: 48, right: 24, top: 40, bottom: 36 },
+            // 双侧 Y 轴（左「百分比(%)」右「平均分」）的轴名与刻度都占外侧空间，
+            // 原 right:24 会把右轴文字裁掉，故左右各留出轴名宽度，上下留出轴名行高。
+            grid: { left: 56, right: 64, top: 48, bottom: 40 },
             tooltip: {
                 trigger: 'axis',
                 backgroundColor: 'rgba(255,255,255,.92)',

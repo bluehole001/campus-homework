@@ -1,0 +1,110 @@
+== campus-homework 冒烟 + 压测报告 ==
+时间：2026-11-14 00:35:49
+目标：http://127.0.0.1:9090 (dev profile) | MySQL 3306(root/口令见 SQL 注释或 MYSQL_PWD) | Redis 6379 | RabbitMQ 缺席时 MQ 投递旁路降级
+压测引擎：Python 标准库 http.client，每会话复用 HTTP/1.1 keep-alive 长连接 + TCP_NODELAY
+鉴权模型：有状态 Session(JSESSIONID Cookie)，未认证回 HTTP 401、角色不符回 HTTP 403、
+          Service 层 IDOR 回 HTTP 200 + body code=403（Result<T> 契约，前端按 code 判定）
+
+starting rabbitmq-server (Erlang=C:\Users\11360\Desktop\Spring_Boot\erlangs\OTP-24.3.4) ...
+rabbitmq ready in 10.6s (management API in 0.0s)
+   拓扑预建: 声明 14/14 项成功
+[SMOKE] PASS MQ 拓扑预建(2交换机+6队列+6绑定)                      成功 14/14 失败 0
+   队列清空: 6/6 成功
+[SMOKE] PASS MQ 查重链路自证(投递->路由->落队->取回)                  消息数=1 首条体={"homeworkId": 999001, "studentId": 999001}
+[SMOKE] PASS MQ 成绩统计链路自证(投递->路由->落队->取回)                消息数=1 首条体={"homeworkId": 999002}
+[SMOKE] PASS MQ 批量邮件链路自证(投递->路由->落队->取回)                消息数=1 首条体={"homeworkId": 999003, "type": 1}
+[SMOKE] PASS MQ 死信链路自证(查重DLQ)                           DLQ消息数=1
+[SMOKE] PASS MQ 死信链路自证(成绩DLQ)                           DLQ消息数=1
+[SMOKE] PASS MQ 死信链路自证(邮件DLQ)                           DLQ消息数=1
+   MQ 链路自证: 业务路由 OK / 死信路由 OK
+starting redis-server ...
+redis ready in 0.5s
+starting application from jar (dev profile) ...
+app ready in 3.0s
+=== SMOKE START ===
+[SMOKE] PASS 登录页渲染(匿名)                                  HTTP 200
+[SMOKE] PASS 学生登录 API                                   HTTP 200 role=ROLE_STUDENT
+[SMOKE] PASS 登录态访问受保护页面                                 重定向后 HTTP 200
+[SMOKE] PASS /api/auth/me 回显身份                          
+[SMOKE] PASS 学生作业列表分页                                   records=4 total=4
+[SMOKE] PASS 作业1 详情(本班)                                 title=数据库规范化理论作业
+[SMOKE] PASS 我的提交/成绩(已批改)                               score=92.0 similarity=0.4213
+[SMOKE] PASS 跨班越权隔离(stu101→hw5)                         HTTP 200 code=403 msg=只能查看自己班级的作业
+[SMOKE] PASS 反向越权(stu201→class1作业1)                     HTTP 200 code=403 msg=只能查看自己班级的作业
+[SMOKE] PASS 未认证 API 拦截                                 HTTP 401
+[SMOKE] PASS 学生提交作业4(新提交)                               HTTP 200 data=16
+[SMOKE] PASS 成绩发布后禁止提交(hw1)                             HTTP 200 code=400 msg=成绩已发布，不允许再提交或重交
+[SMOKE] PASS 教师登录                                       HTTP 200
+[SMOKE] PASS 教师作业列表(缓存链路)                               total=3
+[SMOKE] PASS 作业1 批改名单                                   rows=4
+[SMOKE] PASS 成绩分析(缓存击穿防护路径)                             avg=87.3
+[SMOKE] PASS 越权隔离(teacher1→他人作业3名单)                     HTTP 200 code=403 msg=只能操作自己发布的作业
+[SMOKE] PASS 越权隔离(teacher1→非授课班class2雷达)                HTTP 200 code=403 msg=只能查看自己授课班级的知识点雷达
+[SMOKE] PASS 本人授课班雷达(正常路径)                              axes=1
+[SMOKE] PASS 教师发布公告(写链路)                                HTTP 200 id=7
+[SMOKE] PASS 教师发非授课班公告应拒                                HTTP 200 code=403 msg=只能向自己授课的班级发布公告
+[SMOKE] PASS 管理员登录                                      HTTP 200
+[SMOKE] PASS 账号分页(17条)                                  total=17
+[SMOKE] PASS 班级分页(5条)                                   total=5
+[SMOKE] PASS 管理员新增班级                                    HTTP 200
+[SMOKE] PASS 新班级可查询                                     id=6
+[SMOKE] PASS 管理员删除班级(数据复位)                              HTTP 200
+[SMOKE] PASS 管理员访问教师接口应 403                             
+[SMOKE] PASS 学生访问管理员接口应 403                             
+[SMOKE] PASS 分页参数校验(999>100)                            HTTP 200 code=400 msg=每页最多100条
+[SMOKE] PASS 错误密码拒绝                                     HTTP 200 code=401 msg=用户名或密码错误
+[SMOKE] PASS 资源不存在(404语义)                               HTTP 200 code=404 msg=作业不存在或已被删除
+[SMOKE] PASS 班级公告列表                                     count=4
+[SMOKE] PASS 提交后 submit_count 联动(缓存已失效重算)               submitCount=2 (seed=1, 冒烟提交后应 >=2 且与缓存失效后一致)
+[SMOKE] PASS 月度趋势(看板)                                   points=2
+[SMOKE] PASS 登出后旧会话失效(401)                              HTTP 401
+[SMOKE] PASS 重新登录(新会话)                                  sid=3E89566183B3...
+SMOKE RESULT: 44/44 PASS
+=== SMOKE END ===
+=== LOAD START ===
+[SMOKE] PASS 压测预热登录(12并发)                               success 12/12
+hot sessions = 24 (login failures 0)
+[SMOKE] PASS 压测会话建立(24登录)                               success 24/24
+--- 热点读：/api/student/homework/page（Redis 缓存 + 每8次掺入真实提交制造失效） ---
+   threads=24 requests=960 (含掺入写操作 83 次, 写成功 83，触发缓存精确失效) wall=4.73s throughput=202.8 req/s
+   latency avg=42.0ms p50=2.3ms p95=145.7ms p99=375.0ms max=3056.6ms
+   errors: http=0 biz=0 net=0 -> success 100.0%
+--- 公共读：/api/common/clazz/options（Redis 类目缓存热点，无写干扰） ---
+   threads=16 requests=640 wall=0.12s throughput=5172.8 req/s
+   latency avg=2.3ms p50=2.0ms p95=4.5ms p99=5.9ms max=14.9ms
+   errors: http=0 biz=0 net=0 -> success 100.0%
+--- 教师读：/api/teacher/homework/page（本人授课班级缓存链路） ---
+   threads=6 requests=180 wall=0.13s throughput=1334.8 req/s
+   latency avg=4.4ms p50=4.3ms p95=5.8ms p99=7.1ms max=7.1ms
+   errors: http=0 biz=0 net=0 -> success 100.0%
+--- 登录风暴：/api/auth/login（BCrypt CPU 密集 + 每次新建会话） ---
+   threads=16 requests=640 wall=2.12s throughput=301.5 req/s
+   latency avg=52.3ms p50=53.0ms p95=54.8ms p99=55.8ms max=66.9ms
+   errors: http=0 biz=0 net=0 -> success 100.0%
+[SMOKE] PASS 教师批改提交(写链路)                                批改 4 条，作业 2；跳过：无
+[SMOKE] PASS 教师一键发布成绩(触发统计+邮件消息)                        作业 2 发布 HTTP 200 code=200
+=== LOAD END ===
+  homework.plagiarism.queue    total=84    ready=84    unack=0     consumers=0 
+  homework.score.stat.queue    total=0     ready=0     unack=0     consumers=0 
+  homework.mail.batch.queue    total=0     ready=0     unack=0     consumers=0 
+  homework.plagiarism.dlq      total=0     ready=0     unack=0     consumers=0 
+  homework.score.stat.dlq      total=0     ready=0     unack=0     consumers=0 
+  homework.mail.batch.dlq      total=0     ready=0     unack=0     consumers=0 
+[SMOKE] PASS MQ 消费者按 dev 配置未启动(消息可观测)                   consumers=全 0
+  homework.plagiarism.queue    取回=3 条 __TypeId__=com.campus.homework.dto.PlagiarismMessage
+  homework.score.stat.queue    取回=1 条 __TypeId__=com.campus.homework.dto.ScoreStatMessage
+  homework.mail.batch.queue    取回=1 条 __TypeId__=com.campus.homework.dto.MailMessage
+[SMOKE] PASS MQ 业务队列有应用投递的消息(压测真实产生)                    取回 5 条 {'homework.plagiarism.queue': 3, 'homework.score.stat.queue': 1, 'homework.mail.batch.queue': 1}（快照计数合计 84，为 5s 采样值）
+[SMOKE] PASS MQ 三类业务链路均有真实消息(查重+统计+邮件)                  覆盖 3/3 
+=== LOG HEALTH CHECK ===
+   log lines=14120 encoding=cp936 levels: ERROR=0 WARN=10 INFO=892 DEBUG=13205 TRACE=0
+[SMOKE] PASS 应用日志零 ERROR                                ERROR 条数=0
+[SMOKE] PASS MQ 上线时零投递失败/零降级                            MQ 降级条数=0
+   WARN 明细: 预期内 10 条 / 未分类 0 条
+[SMOKE] PASS WARN 均为预期类别（业务异常/校验/登录/框架告警/旁路降级）          未分类 WARN 条数=0
+[SMOKE] PASS 应用启动完成证据存在于日志                              日志含 Tomcat/Started 启动完成行=True
+LOG HEALTH: ERROR=0 WARN=10 MQ降级=0 未分类WARN=0
+
+SMOKE TOTAL: 55/55 PASS
+
+LOAD STATS JSON: {"read": {"total": 960, "throughput": 202.8, "avg": 42.0, "p50": 2.3, "p95": 145.7, "p99": 375.0, "errors": {"http": 0, "biz": 0, "net": 0}, "success_rate": 100.0, "writes": {"n": 83, "ok": 83}}, "common": {"total": 640, "throughput": 5172.8, "avg": 2.3, "p50": 2.0, "p95": 4.5, "p99": 5.9, "errors": {"http": 0, "biz": 0, "net": 0}, "success_rate": 100.0, "writes": {"n": 0, "ok": 0}}, "teacher": {"total": 180, "throughput": 1334.8, "avg": 4.4, "p50": 4.3, "p95": 5.8, "p99": 7.1, "errors": {"http": 0, "biz": 0, "net": 0}, "success_rate": 100.0, "writes": {"n": 0, "ok": 0}}, "login": {"total": 640, "throughput": 301.5, "avg": 52.3, "p50": 53.0, "p95": 54.8, "p99": 55.8, "errors": {"http": 0, "biz": 0, "net": 0}, "success_rate": 100.0}}
