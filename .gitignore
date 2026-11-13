@@ -30,3 +30,12 @@ project.private.config.json
 
 # 业务运行产生的目录
 upload/
+
+# 测试脚本的本地产物（日志与报告，不入库；脚本本身 scripts/*.py 是要提交的）
+scripts/*.log
+scripts/*-report.txt
+scripts/*-console.txt
+scripts/pipeline-out.txt
+scripts/smoke-out.txt
+scripts/sqlrunner_out/
+__pycache__/

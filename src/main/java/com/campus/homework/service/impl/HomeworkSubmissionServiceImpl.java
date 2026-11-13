@@ -64,8 +64,8 @@ import java.util.stream.Collectors;
  * （homework.plagiarism），成绩发布事务提交后投递成绩统计预热消息
  * （homework.score.stat）与发布通知邮件消息（homework.mail.batch）。
  * 投递一律挂在 afterCommit 回调：数据未落库不发消息、回滚则不发，
- * 消费端读到的必是已提交数据；投递失败仅记 ERROR 不阻断已成功的业务
- * （查重/预热均为幂等旁路，后续动作会再次触发）。本类同时提供两个
+ * 消费端读到的必是已提交数据；投递失败按旁路降级记 WARN 并跳过，不阻断已成功的业务
+ * （查重/预热均为幂等旁路，后续动作会再次触发，属设计内降级而非故障）。本类同时提供两个
  * MQ 消费端专用入口：plagiarismCheck（查重回写）与 warmScoreCache
  * （查分缓存预热），均为系统内部调用、无登录态。</p>
  *
@@ -757,9 +757,12 @@ public class HomeworkSubmissionServiceImpl extends ServiceImpl<HomeworkSubmissio
     /**
      * 事务提交后投递 MQ 消息（与 Redis 失效同一时机：数据真正落库后才通知异步任务）。
      * <p>无事务上下文时立即发送（理论上不会发生：本类两处调用点均在
-     * {@code @Transactional} 内）。投递异常仅 ERROR 记录、不向上抛出——
+     * {@code @Transactional} 内）。投递异常仅 WARN 记录、不向上抛出——
      * 事务已提交，数据是权威状态；MQ 不可用时查重/预热退化为"下一次
      * 触发动作时重算"，绝不让异步旁路拖垮已成功的业务主流程。</p>
+     * <p>级别选择：这是<b>设计内的旁路降级</b>而非系统故障（主流程与数据均正常），
+     * 记 ERROR 会让"RabbitMQ 未部署"这类环境缺位的日志刷成几百条红字、掩盖真正的
+     * 异常。故用 WARN，并在消息里写清降级后果与自愈路径，便于运维一眼判断影响面。</p>
      *
      * @param action 投递动作（在 afterCommit 回调中执行）
      */
@@ -772,7 +775,8 @@ public class HomeworkSubmissionServiceImpl extends ServiceImpl<HomeworkSubmissio
                         action.run();
                     } catch (Exception e) {
                         // 消息丢失可接受：查重/预热均为幂等旁路任务，后续动作会再次触发
-                        log.error("事务提交后 MQ 投递失败（本次异步任务降级跳过）: {}", e.getMessage());
+                        log.warn("事务提交后 MQ 投递失败，本次旁路任务跳过（业务数据已落库不受影响；"
+                                + "查重/成绩预热将在下一次触发动作时重算）: {}", e.getMessage());
                     }
                 }
             });
@@ -780,7 +784,8 @@ public class HomeworkSubmissionServiceImpl extends ServiceImpl<HomeworkSubmissio
             try {
                 action.run();
             } catch (Exception e) {
-                log.error("MQ 投递失败（本次异步任务降级跳过）: {}", e.getMessage());
+                log.warn("MQ 投递失败，本次旁路任务跳过（业务数据已落库不受影响；"
+                        + "查重/成绩预热将在下一次触发动作时重算）: {}", e.getMessage());
             }
         }
     }
